@@ -39,7 +39,7 @@ MAX_RESULTS = 100  # max per page for recent search
 
 EXCLUDED_ACCOUNTS = {
     "sfpdcallsbot", "sfchronicle", "kqednews",
-    "mlnow", "sfist", "sfstandard", "48hills",
+    "mlnow", "sfist", "sfstandard", "48hills", "grok",
 }
 
 _RE_JACKIE_START   = re.compile(r"^@JackieFielder_\b", re.IGNORECASE)

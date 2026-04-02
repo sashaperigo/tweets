@@ -500,7 +500,7 @@ class TestGetIsExcluded(unittest.TestCase):
 
     def test_excluded_account_returns_true(self):
         for username in ["sfpdcallsbot", "sfchronicle", "kqednews",
-                         "mlnow", "sfist", "sfstandard", "48hills"]:
+                         "mlnow", "sfist", "sfstandard", "48hills", "grok"]:
             with self.subTest(username=username):
                 self.assertTrue(dt.get_is_excluded(username))
 
