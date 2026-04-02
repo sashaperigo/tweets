@@ -564,13 +564,6 @@ class TestDataIntegrity(unittest.TestCase):
         rts = [t for t in self._load_csv_texts() if t.startswith("RT @")]
         self.assertEqual(rts, [], f"{len(rts)} RT tweets found in CSV")
 
-    def test_json_contains_no_type2_replies(self):
-        type2 = [t for t in self._load_json_texts() if dt.is_reply_to_other(t)]
-        self.assertEqual(type2, [], f"{len(type2)} type-2 tweets found in JSON")
-
-    def test_csv_contains_no_type2_replies(self):
-        type2 = [t for t in self._load_csv_texts() if dt.is_reply_to_other(t)]
-        self.assertEqual(type2, [], f"{len(type2)} type-2 tweets found in CSV")
 
     def test_json_contains_no_duplicate_ids(self):
         with open(JSON_PATH) as f:

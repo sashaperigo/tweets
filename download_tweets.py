@@ -158,7 +158,7 @@ def download_all_tweets(since_id=None):
             if since_id and int(tweet["id"]) <= int(since_id):
                 past_boundary = True
                 continue
-            if is_reply_to_other(tweet["text"]) or tweet["text"].startswith("RT @"):
+            if tweet["text"].startswith("RT @"):
                 continue
             user = users_by_id.get(tweet.get("author_id"), {})
             tweet["username"] = user.get("username", "")
@@ -223,7 +223,7 @@ def backfill_tweets(end_time, start_time):
             if tweet_dt < start_dt:
                 hit_boundary = True
                 continue
-            if is_reply_to_other(tweet["text"]) or tweet["text"].startswith("RT @"):
+            if tweet["text"].startswith("RT @"):
                 continue
             user = users_by_id.get(tweet.get("author_id"), {})
             tweet["username"] = user.get("username", "")
