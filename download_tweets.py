@@ -168,7 +168,6 @@ def download_all_tweets(since_id=None):
 
         if batch:
             save_json(batch)
-            save_csv(batch)
             total += len(batch)
 
         meta = data.get("meta", {})
@@ -233,7 +232,6 @@ def backfill_tweets(end_time, start_time):
 
         if batch:
             save_json(batch)
-            save_csv(batch)
             total += len(batch)
 
         meta = data.get("meta", {})
@@ -342,6 +340,17 @@ def save_csv(tweets, path="jackie_fielder_tweets.csv"):
     print(f"Saved CSV to {path}")
 
 
+def finalize_csv(json_path="jackie_fielder_tweets.json", csv_path="jackie_fielder_tweets.csv"):
+    """Rebuild CSV from scratch using the deduplicated JSON as the source of truth."""
+    print(f"\nFinalizing {csv_path} from {json_path}...")
+    with open(json_path) as f:
+        tweets = json.load(f)["tweets"]
+    if os.path.exists(csv_path):
+        os.remove(csv_path)
+    save_csv(tweets, path=csv_path)
+    print(f"  Wrote {len(tweets)} rows to {csv_path}.")
+
+
 if __name__ == "__main__":
     import sys
 
@@ -362,3 +371,5 @@ if __name__ == "__main__":
     print(f"\nTotal tweets fetched this run: {total}")
     new_count = finalize_json()
     print(f"Total new unique tweets added to database: {new_count}")
+    if new_count > 0:
+        finalize_csv()

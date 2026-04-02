@@ -181,7 +181,7 @@ class TestBackfillClientSideBoundary(unittest.TestCase):
 
     def _run_backfill(self, pages):
         with mock.patch.object(dt, "fetch_page", side_effect=_fake_fetch_page(pages)), \
-             mock.patch.object(dt, "save_csv"):
+             mock.patch.object(dt, "save_json"):
             return dt.backfill_tweets(
                 end_time="2025-11-07T00:00:00Z",
                 start_time="2025-10-01T00:00:00Z",
@@ -211,7 +211,7 @@ class TestBackfillClientSideBoundary(unittest.TestCase):
             call_count[0] += 1
             return fetch(*args, **kwargs)
         with mock.patch.object(dt, "fetch_page", side_effect=counting_fetch), \
-             mock.patch.object(dt, "save_csv"):
+             mock.patch.object(dt, "save_json"):
             dt.backfill_tweets(end_time="2025-11-07T00:00:00Z", start_time="2025-10-01T00:00:00Z")
         # Should have stopped after page 2, not fetched a third page
         self.assertEqual(call_count[0], 2)
@@ -377,6 +377,64 @@ class TestSaveCsv(unittest.TestCase):
         self.assertEqual(row["username"], "user1")
         self.assertEqual(row["likes"], "1")
         self.assertEqual(row["impressions"], "10")
+
+
+# ---------------------------------------------------------------------------
+# finalize_csv
+# ---------------------------------------------------------------------------
+
+class TestFinalizeCsv(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp_dir = tempfile.mkdtemp()
+        self.json_path = os.path.join(self.tmp_dir, "tweets.json")
+        self.csv_path = os.path.join(self.tmp_dir, "tweets.csv")
+        dt._vader.polarity_scores.return_value = {
+            "compound": 0.0, "pos": 0.0, "neg": 0.0, "neu": 1.0
+        }
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp_dir)
+
+    def _write_json(self, tweets):
+        with open(self.json_path, "w") as f:
+            json.dump({"tweets": tweets}, f)
+
+    def test_csv_row_count_matches_json(self):
+        self._write_json(SAMPLE_TWEETS)
+        dt.finalize_csv(json_path=self.json_path, csv_path=self.csv_path)
+        with open(self.csv_path, newline="") as f:
+            rows = list(csv.DictReader(f))
+        self.assertEqual(len(rows), len(SAMPLE_TWEETS))
+
+    def test_csv_contains_correct_ids(self):
+        self._write_json(SAMPLE_TWEETS)
+        dt.finalize_csv(json_path=self.json_path, csv_path=self.csv_path)
+        with open(self.csv_path, newline="") as f:
+            ids = [r["id"] for r in csv.DictReader(f)]
+        self.assertEqual(ids, ["100", "200"])
+
+    def test_csv_has_all_columns(self):
+        self._write_json(SAMPLE_TWEETS)
+        dt.finalize_csv(json_path=self.json_path, csv_path=self.csv_path)
+        with open(self.csv_path, newline="") as f:
+            fieldnames = csv.DictReader(f).fieldnames
+        expected = ["id", "created_at", "username", "name", "text",
+                    "likes", "retweets", "replies", "quotes", "impressions",
+                    "reply_type", "sentiment", "sentiment_score", "is_excluded"]
+        self.assertEqual(fieldnames, expected)
+
+    def test_overwrites_existing_csv(self):
+        # Write a stale CSV with wrong data, then finalize should replace it
+        with open(self.csv_path, "w") as f:
+            f.write("stale,data\n1,2\n")
+        self._write_json(SAMPLE_TWEETS)
+        dt.finalize_csv(json_path=self.json_path, csv_path=self.csv_path)
+        with open(self.csv_path, newline="") as f:
+            rows = list(csv.DictReader(f))
+        self.assertEqual(len(rows), len(SAMPLE_TWEETS))
+        self.assertEqual(rows[0]["id"], "100")
 
 
 # ---------------------------------------------------------------------------
