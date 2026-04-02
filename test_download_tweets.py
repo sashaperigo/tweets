@@ -398,6 +398,26 @@ class TestDataIntegrity(unittest.TestCase):
         type2 = [t for t in self._load_csv_texts() if dt.is_reply_to_other(t)]
         self.assertEqual(type2, [], f"{len(type2)} type-2 tweets found in CSV")
 
+    def test_json_contains_no_duplicate_ids(self):
+        with open(JSON_PATH) as f:
+            ids = [t["id"] for t in json.load(f)["tweets"]]
+        dupes = [i for i in set(ids) if ids.count(i) > 1]
+        self.assertEqual(dupes, [], f"{len(dupes)} duplicate IDs found in JSON")
+
+    def test_csv_contains_no_duplicate_ids(self):
+        with open(CSV_PATH, newline="", encoding="utf-8") as f:
+            ids = [row["id"] for row in csv.DictReader(f)]
+        dupes = [i for i in set(ids) if ids.count(i) > 1]
+        self.assertEqual(dupes, [], f"{len(dupes)} duplicate IDs found in CSV")
+
+    def test_json_and_csv_have_same_count(self):
+        with open(JSON_PATH) as f:
+            json_count = len(json.load(f)["tweets"])
+        with open(CSV_PATH, newline="", encoding="utf-8") as f:
+            csv_count = sum(1 for _ in csv.DictReader(f))
+        self.assertEqual(json_count, csv_count,
+                         f"JSON has {json_count} tweets but CSV has {csv_count} rows")
+
 
 if __name__ == "__main__":
     unittest.main()
