@@ -339,9 +339,7 @@ class TestSaveCsv(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.NamedTemporaryFile(suffix=".csv", delete=False)
         self.tmp.close()
-        os.unlink(self.tmp.name)  # start with no file
-        # _vader is a MagicMock from import-time patching; give polarity_scores
-        # a real return value so get_sentiment works without the VADER lexicon.
+        os.unlink(self.tmp.name)
         dt._vader.polarity_scores.return_value = {
             "compound": 0.0, "pos": 0.0, "neg": 0.0, "neu": 1.0
         }
@@ -358,15 +356,6 @@ class TestSaveCsv(unittest.TestCase):
                                    "likes", "retweets", "replies", "quotes", "impressions",
                                    "reply_type", "sentiment", "sentiment_score", "is_excluded"])
         self.assertEqual(len(rows), 3)  # header + 2 tweets
-
-    def test_appends_without_duplicate_header(self):
-        dt.save_csv(SAMPLE_TWEETS[:1], path=self.tmp.name)
-        dt.save_csv(SAMPLE_TWEETS[1:], path=self.tmp.name)
-        with open(self.tmp.name, newline="") as f:
-            rows = list(csv.reader(f))
-        headers = [r for r in rows if r[0] == "id"]
-        self.assertEqual(len(headers), 1)
-        self.assertEqual(len(rows), 3)  # 1 header + 2 data rows
 
     def test_correct_field_values(self):
         dt.save_csv(SAMPLE_TWEETS[:1], path=self.tmp.name)

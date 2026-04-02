@@ -311,13 +311,11 @@ def finalize_json(path="jackie_fielder_tweets.json"):
 
 
 def save_csv(tweets, path="jackie_fielder_tweets.csv"):
-    append = os.path.exists(path)
-    with open(path, "a" if append else "w", newline="", encoding="utf-8") as f:
+    with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        if not append:
-            writer.writerow(["id", "created_at", "username", "name", "text",
-                             "likes", "retweets", "replies", "quotes", "impressions",
-                             "reply_type", "sentiment", "sentiment_score", "is_excluded"])
+        writer.writerow(["id", "created_at", "username", "name", "text",
+                         "likes", "retweets", "replies", "quotes", "impressions",
+                         "reply_type", "sentiment", "sentiment_score", "is_excluded"])
         for t in tweets:
             m = t.get("public_metrics", {})
             sentiment_label, sentiment_score = get_sentiment(t["text"])
