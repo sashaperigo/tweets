@@ -646,69 +646,202 @@ def _make_data_integrity_tests(politician):
 
     class TestDataIntegrity(unittest.TestCase):
 
-        def _load_json_texts(self):
+        def _tweets(self):
             with open(politician.json_path) as f:
-                return [t["text"] for t in json.load(f)["tweets"]]
+                return json.load(f)["tweets"]
 
         def _csv_rows(self):
             with open(politician.csv_path, newline="", encoding="utf-8") as f:
                 return list(csv.DictReader(f))
 
+        # ------------------------------------------------------------------
+        # JSON — structure and field-level checks
+        # ------------------------------------------------------------------
+
+        def test_json_tweets_have_required_fields(self):
+            required = {"id", "created_at", "author_id", "text",
+                        "public_metrics", "edit_history_tweet_ids"}
+            tweets = self._tweets()
+            missing = [t.get("id", "?") for t in tweets if not required.issubset(t.keys())]
+            self.assertEqual(missing, [],
+                f"{len(missing)} tweets are missing one or more required fields")
+
         def test_json_contains_no_retweets(self):
-            rts = [t for t in self._load_json_texts() if t.startswith("RT @")]
+            rts = [t["text"] for t in self._tweets() if t["text"].startswith("RT @")]
             self.assertEqual(rts, [], f"{len(rts)} RT tweets found in JSON")
+
+        def test_json_contains_no_duplicate_ids(self):
+            ids = [t["id"] for t in self._tweets()]
+            dupes = [i for i in set(ids) if ids.count(i) > 1]
+            self.assertEqual(dupes, [], f"{len(dupes)} duplicate IDs found in JSON")
+
+        def test_json_id_is_numeric_string(self):
+            invalid = [t.get("id") for t in self._tweets()
+                       if not str(t.get("id", "")).isdigit()]
+            self.assertEqual(invalid, [],
+                f"{len(invalid)} tweets have a non-numeric id")
+
+        def test_json_author_id_is_numeric_string(self):
+            invalid = [t.get("id") for t in self._tweets()
+                       if not str(t.get("author_id", "")).isdigit()]
+            self.assertEqual(invalid, [],
+                f"{len(invalid)} tweets have a non-numeric author_id")
+
+        def test_json_created_at_is_valid_datetime(self):
+            from datetime import datetime
+            invalid = []
+            for t in self._tweets():
+                try:
+                    datetime.fromisoformat(t.get("created_at", "").replace("Z", "+00:00"))
+                except (ValueError, AttributeError):
+                    invalid.append(t.get("id"))
+            self.assertEqual(invalid, [],
+                f"{len(invalid)} tweets have an unparseable created_at")
+
+        def test_json_edit_history_is_list_of_strings(self):
+            invalid = []
+            for t in self._tweets():
+                eh = t.get("edit_history_tweet_ids")
+                if not isinstance(eh, list) or len(eh) == 0:
+                    invalid.append(t.get("id"))
+                elif not all(isinstance(x, str) and x.isdigit() for x in eh):
+                    invalid.append(t.get("id"))
+            self.assertEqual(invalid, [],
+                f"{len(invalid)} tweets have an invalid edit_history_tweet_ids")
+
+        def test_json_text_is_non_empty_string(self):
+            invalid = [t.get("id") for t in self._tweets()
+                       if not isinstance(t.get("text"), str) or not t["text"].strip()]
+            self.assertEqual(invalid, [],
+                f"{len(invalid)} tweets have empty or missing text")
+
+        def test_json_public_metrics_are_valid(self):
+            required_metrics = {
+                "like_count", "retweet_count", "reply_count",
+                "quote_count", "impression_count",
+            }
+            invalid = []
+            for t in self._tweets():
+                m = t.get("public_metrics")
+                if not isinstance(m, dict):
+                    invalid.append(t.get("id"))
+                    continue
+                if not required_metrics.issubset(m.keys()):
+                    invalid.append(t.get("id"))
+                    continue
+                if any(not isinstance(m[k], int) or m[k] < 0 for k in required_metrics):
+                    invalid.append(t.get("id"))
+            self.assertEqual(invalid, [],
+                f"{len(invalid)} tweets have missing or negative public_metrics")
+
+        # ------------------------------------------------------------------
+        # CSV — column presence, types, and value ranges
+        # ------------------------------------------------------------------
+
+        def test_json_and_csv_have_same_count(self):
+            json_count = len(self._tweets())
+            csv_count = len(self._csv_rows())
+            self.assertEqual(json_count, csv_count,
+                f"JSON has {json_count} tweets but CSV has {csv_count} rows")
+
+        def test_csv_has_all_expected_columns(self):
+            expected = ["id", "created_at", "username", "name", "text",
+                        "likes", "retweets", "replies", "quotes", "impressions",
+                        "reply_type", "sentiment", "sentiment_score", "is_excluded"]
+            rows = self._csv_rows()
+            self.assertEqual(list(rows[0].keys()), expected,
+                f"CSV columns don't match expected schema")
 
         def test_csv_contains_no_retweets(self):
             rts = [r["text"] for r in self._csv_rows() if r["text"].startswith("RT @")]
             self.assertEqual(rts, [], f"{len(rts)} RT tweets found in CSV")
-
-        def test_json_contains_no_duplicate_ids(self):
-            with open(politician.json_path) as f:
-                ids = [t["id"] for t in json.load(f)["tweets"]]
-            dupes = [i for i in set(ids) if ids.count(i) > 1]
-            self.assertEqual(dupes, [], f"{len(dupes)} duplicate IDs found in JSON")
 
         def test_csv_contains_no_duplicate_ids(self):
             ids = [r["id"] for r in self._csv_rows()]
             dupes = [i for i in set(ids) if ids.count(i) > 1]
             self.assertEqual(dupes, [], f"{len(dupes)} duplicate IDs found in CSV")
 
-        def test_json_and_csv_have_same_count(self):
-            with open(politician.json_path) as f:
-                json_count = len(json.load(f)["tweets"])
-            csv_count = len(self._csv_rows())
-            self.assertEqual(json_count, csv_count,
-                             f"JSON has {json_count} tweets but CSV has {csv_count} rows")
+        def test_csv_id_is_numeric(self):
+            invalid = [r["id"] for r in self._csv_rows() if not r.get("id", "").isdigit()]
+            self.assertEqual(invalid, [], f"{len(invalid)} rows have a non-numeric id")
 
-        def test_every_csv_row_has_valid_reply_type(self):
+        def test_csv_created_at_is_valid_datetime(self):
+            from datetime import datetime
+            invalid = []
+            for r in self._csv_rows():
+                try:
+                    datetime.fromisoformat(r.get("created_at", "").replace("Z", "+00:00"))
+                except (ValueError, AttributeError):
+                    invalid.append(r.get("id"))
+            self.assertEqual(invalid, [],
+                f"{len(invalid)} rows have an unparseable created_at")
+
+        def test_csv_text_is_non_empty(self):
+            invalid = [r["id"] for r in self._csv_rows() if not r.get("text", "").strip()]
+            self.assertEqual(invalid, [], f"{len(invalid)} rows have empty text")
+
+        def test_csv_username_and_name_are_strings(self):
+            # username and name may be empty for historical data, but must be present
+            # and must be strings (not None or a non-string type)
+            rows = self._csv_rows()
+            self.assertIn("username", rows[0].keys(), "CSV is missing 'username' column")
+            self.assertIn("name", rows[0].keys(), "CSV is missing 'name' column")
+            invalid = [r["id"] for r in rows
+                       if not isinstance(r.get("username"), str)
+                       or not isinstance(r.get("name"), str)]
+            self.assertEqual(invalid, [],
+                f"{len(invalid)} rows have non-string username or name")
+
+        def test_csv_numeric_metrics_are_non_negative(self):
+            metric_cols = ["likes", "retweets", "replies", "quotes", "impressions"]
+            invalid = []
+            for r in self._csv_rows():
+                for col in metric_cols:
+                    try:
+                        if int(r.get(col, 0)) < 0:
+                            invalid.append((r["id"], col))
+                    except (ValueError, TypeError):
+                        invalid.append((r["id"], col))
+            self.assertEqual(invalid, [],
+                f"{len(invalid)} (row, col) pairs have invalid metric values")
+
+        def test_csv_reply_type_is_valid(self):
             valid = {"Direct reply", "Mention", "Not tagged", "Thread mention"}
             rows = self._csv_rows()
             self.assertIn("reply_type", rows[0].keys(), "CSV is missing 'reply_type' column")
-            invalid = [r for r in rows if r.get("reply_type") not in valid]
-            self.assertEqual(invalid, [], f"{len(invalid)} rows have missing or invalid reply_type")
+            invalid = [r["id"] for r in rows if r.get("reply_type") not in valid]
+            self.assertEqual(invalid, [],
+                f"{len(invalid)} rows have missing or invalid reply_type")
 
-        def test_every_csv_row_has_valid_sentiment(self):
+        def test_csv_sentiment_label_is_valid(self):
             valid_labels = {"positive", "negative", "neutral"}
             rows = self._csv_rows()
             self.assertIn("sentiment", rows[0].keys(), "CSV is missing 'sentiment' column")
-            self.assertIn("sentiment_score", rows[0].keys(), "CSV is missing 'sentiment_score' column")
-            invalid_label = [r for r in rows if r.get("sentiment") not in valid_labels]
-            self.assertEqual(invalid_label, [], f"{len(invalid_label)} rows have invalid sentiment label")
-            invalid_score = []
+            invalid = [r["id"] for r in rows if r.get("sentiment") not in valid_labels]
+            self.assertEqual(invalid, [],
+                f"{len(invalid)} rows have an invalid sentiment label")
+
+        def test_csv_sentiment_score_is_in_range(self):
+            rows = self._csv_rows()
+            self.assertIn("sentiment_score", rows[0].keys(),
+                "CSV is missing 'sentiment_score' column")
+            invalid = []
             for r in rows:
                 try:
                     score = float(r.get("sentiment_score", ""))
                     if not (-1.0 <= score <= 1.0):
-                        invalid_score.append(r)
+                        invalid.append(r["id"])
                 except (ValueError, TypeError):
-                    invalid_score.append(r)
-            self.assertEqual(invalid_score, [], f"{len(invalid_score)} rows have invalid sentiment_score")
+                    invalid.append(r["id"])
+            self.assertEqual(invalid, [],
+                f"{len(invalid)} rows have an out-of-range or unparseable sentiment_score")
 
-        def test_every_csv_row_has_valid_is_excluded(self):
+        def test_csv_is_excluded_is_valid(self):
             rows = self._csv_rows()
             self.assertIn("is_excluded", rows[0].keys(), "CSV is missing 'is_excluded' column")
-            invalid = [r for r in rows if r.get("is_excluded") not in {"True", "False"}]
-            self.assertEqual(invalid, [], f"{len(invalid)} rows have invalid is_excluded value")
+            invalid = [r["id"] for r in rows if r.get("is_excluded") not in {"True", "False"}]
+            self.assertEqual(invalid, [],
+                f"{len(invalid)} rows have an invalid is_excluded value")
 
     TestDataIntegrity.__name__ = f"TestDataIntegrity_{politician.name.replace(' ', '')}"
     return TestDataIntegrity
