@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Download tweets mentioning "@JackieFielder_" or "Jackie Fielder" (case insensitive)
-using the X (Twitter) API v2 recent search endpoint.
+Download tweets mentioning a politician by name or Twitter handle,
+using the X (Twitter) API v2 search endpoints.
 """
 
 import re
@@ -10,6 +10,7 @@ import json
 import csv
 import time
 import os
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
@@ -26,26 +27,56 @@ def load_bearer_token(keys_file="xapi-keys"):
 
 BEARER_TOKEN = load_bearer_token()
 
-SEARCH_URL = "https://api.twitter.com/2/tweets/search/recent"
+SEARCH_URL     = "https://api.twitter.com/2/tweets/search/recent"
 SEARCH_URL_ALL = "https://api.twitter.com/2/tweets/search/all"  # requires paid API access
 
-# Case-insensitive OR search — Twitter API v2 query syntax
-# The API is case-insensitive by default for keyword/mention searches
-QUERY = '"Jackie Fielder" OR @JackieFielder_ -is:retweet'
-
 TWEET_FIELDS = "created_at,public_metrics,author_id"
-USER_FIELDS = "username,name"
-EXPANSIONS = "author_id"
-MAX_RESULTS = 100  # max per page for recent search
+USER_FIELDS  = "username,name"
+EXPANSIONS   = "author_id"
+MAX_RESULTS  = 100  # max per page for recent search
 
 EXCLUDED_ACCOUNTS = {
     "sfpdcallsbot", "sfchronicle", "kqednews",
     "mlnow", "sfist", "sfstandard", "48hills", "grok",
 }
 
-_RE_JACKIE_START   = re.compile(r"^@JackieFielder_\b", re.IGNORECASE)
-_RE_JACKIE_ANYWHERE = re.compile(r"@JackieFielder_\b", re.IGNORECASE)
-_RE_FIRST_MENTION  = re.compile(r"@(\w+)")
+_RE_FIRST_MENTION = re.compile(r"@(\w+)")
+
+
+@dataclass
+class Politician:
+    name: str         # e.g. "Jackie Fielder"
+    handle: str       # Twitter handle without @, e.g. "JackieFielder_"
+    json_path: str
+    csv_path: str
+    staging_path: str
+    query: str = field(init=False)
+    re_start: re.Pattern = field(init=False)    # tweet starts with @handle
+    re_anywhere: re.Pattern = field(init=False) # @handle appears anywhere
+
+    def __post_init__(self):
+        self.query = f'"{self.name}" OR @{self.handle} -is:retweet'
+        self.re_start   = re.compile(rf"^@{re.escape(self.handle)}\b", re.IGNORECASE)
+        self.re_anywhere = re.compile(rf"@{re.escape(self.handle)}\b", re.IGNORECASE)
+
+
+JACKIE = Politician(
+    name="Jackie Fielder",
+    handle="JackieFielder_",
+    json_path="jackie_fielder_tweets.json",
+    csv_path="jackie_fielder_tweets.csv",
+    staging_path="jackie_fielder_tweets_staging.jsonl",
+)
+
+DANIEL = Politician(
+    name="Daniel Lurie",
+    handle="DanielLurie",
+    json_path="daniel_lurie_tweets.json",
+    csv_path="daniel_lurie_tweets.csv",
+    staging_path="daniel_lurie_tweets_staging.jsonl",
+)
+
+POLITICIANS = {"jackie": JACKIE, "daniel": DANIEL}
 
 
 def get_is_excluded(username):
@@ -68,37 +99,37 @@ def get_sentiment(text):
     return "neutral", compound
 
 
-def get_reply_type(text):
-    """Classify a tweet's relationship to @JackieFielder_.
+def get_reply_type(text, politician):
+    """Classify a tweet's relationship to the politician.
 
     Returns:
-        "Direct reply"   — tweet starts with @JackieFielder_
-        "Thread mention" — tweet starts with two or more @handles, Jackie is among them but not first
-        "Mention"        — tweet contains @JackieFielder_ embedded in regular text (not a reply)
-        "Not tagged"     — tweet doesn't contain @JackieFielder_ at all
+        "Direct reply"   — tweet starts with @handle
+        "Thread mention" — tweet starts with two or more @handles, politician is among them but not first
+        "Mention"        — tweet contains @handle embedded in regular text (not a reply)
+        "Not tagged"     — tweet doesn't contain @handle at all
     """
-    if _RE_JACKIE_START.match(text):
+    if politician.re_start.match(text):
         return "Direct reply"
-    if is_reply_to_other(text):
+    if is_reply_to_other(text, politician):
         return "Thread mention"
-    if _RE_JACKIE_ANYWHERE.search(text):
+    if politician.re_anywhere.search(text):
         return "Mention"
     return "Not tagged"
 
 
-def is_reply_to_other(text):
-    """Return True for type-2 tweets: replies where Jackie is tagged but isn't
-    the first @mention (i.e. the tweet is directed at someone else)."""
+def is_reply_to_other(text, politician):
+    """Return True when a tweet starts with @handles but the politician isn't first
+    (i.e. directed at someone else with the politician tagged in the thread)."""
     if not text.startswith("@"):
         return False
     first_mention = _RE_FIRST_MENTION.match(text)
-    return first_mention and first_mention.group(1).lower() != "jackiefielder_"
+    return first_mention and first_mention.group(1).lower() != politician.handle.lower()
 
 
-def fetch_page(next_token=None, since_id=None, end_time=None, url=None):
+def fetch_page(politician, next_token=None, since_id=None, end_time=None, url=None):
     headers = {"Authorization": f"Bearer {BEARER_TOKEN}"}
     params = {
-        "query": QUERY,
+        "query": politician.query,
         "tweet.fields": TWEET_FIELDS,
         "user.fields": USER_FIELDS,
         "expansions": EXPANSIONS,
@@ -138,13 +169,22 @@ def get_latest_id(csv_path):
     return str(max(ids)) if ids else None
 
 
-def download_all_tweets(since_id=None):
+def get_earliest_time(csv_path):
+    """Return the earliest created_at timestamp in the CSV, or None if file doesn't exist."""
+    if not os.path.exists(csv_path):
+        return None
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        dates = [row["created_at"] for row in csv.DictReader(f) if row.get("created_at")]
+    return min(dates) if dates else None
+
+
+def download_all_tweets(politician, since_id=None):
     users_by_id = {}
     next_token = None
     total = 0
 
     while True:
-        data = fetch_page(next_token, since_id=since_id)
+        data = fetch_page(politician, next_token, since_id=since_id)
 
         for user in data.get("includes", {}).get("users", []):
             users_by_id[user["id"]] = user
@@ -164,7 +204,7 @@ def download_all_tweets(since_id=None):
             batch.append(tweet)
 
         if batch:
-            save_json(batch)
+            save_json(batch, politician)
             total += len(batch)
 
         meta = data.get("meta", {})
@@ -180,16 +220,7 @@ def download_all_tweets(since_id=None):
     return total
 
 
-def get_earliest_time(csv_path):
-    """Return the earliest created_at timestamp in the CSV, or None if file doesn't exist."""
-    if not os.path.exists(csv_path):
-        return None
-    with open(csv_path, newline="", encoding="utf-8") as f:
-        dates = [row["created_at"] for row in csv.DictReader(f) if row.get("created_at")]
-    return min(dates) if dates else None
-
-
-def backfill_tweets(end_time, start_time):
+def backfill_tweets(politician, end_time, start_time):
     """Backfill tweets older than end_time, stopping at start_time.
 
     Passes end_time to the API so results begin just before our earliest
@@ -204,7 +235,7 @@ def backfill_tweets(end_time, start_time):
     total = 0
 
     while True:
-        data = fetch_page(next_token, end_time=end_time, url=SEARCH_URL_ALL)
+        data = fetch_page(politician, next_token, end_time=end_time, url=SEARCH_URL_ALL)
 
         for user in data.get("includes", {}).get("users", []):
             users_by_id[user["id"]] = user
@@ -225,7 +256,7 @@ def backfill_tweets(end_time, start_time):
             batch.append(tweet)
 
         if batch:
-            save_json(batch)
+            save_json(batch, politician)
             total += len(batch)
 
         meta = data.get("meta", {})
@@ -241,13 +272,10 @@ def backfill_tweets(end_time, start_time):
     return total
 
 
-STAGING_PATH = "jackie_fielder_tweets_staging.jsonl"
-
-
-def save_json(tweets):
-    """Append new tweets to a staging JSONL file (fast, O(1) per batch)."""
+def save_json(tweets, politician):
+    """Append new tweets to the politician's staging JSONL file (fast, O(1) per batch)."""
     print(f"  Appending {len(tweets)} tweets to staging file...")
-    with open(STAGING_PATH, "a", encoding="utf-8") as f:
+    with open(politician.staging_path, "a", encoding="utf-8") as f:
         for t in tweets:
             f.write(json.dumps({
                 "created_at": t["created_at"],
@@ -260,8 +288,10 @@ def save_json(tweets):
     print(f"  Staging file updated.")
 
 
-def finalize_json(path="jackie_fielder_tweets.json"):
+def finalize_json(politician):
     """Merge staging file into main JSON, deduplicate, and clean up staging file."""
+    path = politician.json_path
+    staging = politician.staging_path
     print(f"\nFinalizing {path}...")
 
     print("  Loading existing tweets...")
@@ -274,13 +304,13 @@ def finalize_json(path="jackie_fielder_tweets.json"):
 
     print("  Loading staged tweets...")
     staged = []
-    if os.path.exists(STAGING_PATH):
-        with open(STAGING_PATH, encoding="utf-8") as f:
+    if os.path.exists(staging):
+        with open(staging, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if line:
                     staged.append(json.loads(line))
-        os.remove(STAGING_PATH)
+        os.remove(staging)
     if not staged:
         print("  No new tweets were found this run.")
         return 0
@@ -304,7 +334,8 @@ def finalize_json(path="jackie_fielder_tweets.json"):
     return len(new_tweets)
 
 
-def save_csv(tweets, path="jackie_fielder_tweets.csv"):
+def save_csv(tweets, politician, path=None):
+    path = path or politician.csv_path
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["id", "created_at", "username", "name", "text",
@@ -313,10 +344,11 @@ def save_csv(tweets, path="jackie_fielder_tweets.csv"):
         for t in tweets:
             m = t.get("public_metrics", {})
             sentiment_label, sentiment_score = get_sentiment(t["text"])
+            username = t.get("username", "")
             writer.writerow([
                 t["id"],
                 t["created_at"],
-                t.get("username", ""),
+                username,
                 t.get("name", ""),
                 t["text"],
                 m.get("like_count", 0),
@@ -324,44 +356,53 @@ def save_csv(tweets, path="jackie_fielder_tweets.csv"):
                 m.get("reply_count", 0),
                 m.get("quote_count", 0),
                 m.get("impression_count", 0),
-                get_reply_type(t["text"]),
+                get_reply_type(t["text"], politician),
                 sentiment_label,
                 sentiment_score,
-                get_is_excluded(t.get("username", "")),
+                get_is_excluded(username),
             ])
     print(f"Saved CSV to {path}")
 
 
-def finalize_csv(json_path="jackie_fielder_tweets.json", csv_path="jackie_fielder_tweets.csv"):
+def finalize_csv(politician):
     """Rebuild CSV from scratch using the deduplicated JSON as the source of truth."""
-    print(f"\nFinalizing {csv_path} from {json_path}...")
-    with open(json_path) as f:
+    print(f"\nFinalizing {politician.csv_path} from {politician.json_path}...")
+    with open(politician.json_path) as f:
         tweets = json.load(f)["tweets"]
-    if os.path.exists(csv_path):
-        os.remove(csv_path)
-    save_csv(tweets, path=csv_path)
-    print(f"  Wrote {len(tweets)} rows to {csv_path}.")
+    if os.path.exists(politician.csv_path):
+        os.remove(politician.csv_path)
+    save_csv(tweets, politician)
+    print(f"  Wrote {len(tweets)} rows to {politician.csv_path}.")
 
 
 if __name__ == "__main__":
     import sys
 
-    if "--backfill" in sys.argv:
-        end_time = get_earliest_time("jackie_fielder_tweets.csv")
+    args = sys.argv[1:]
+    politician_key = next((a for a in args if not a.startswith("--")), None)
+    if not politician_key or politician_key not in POLITICIANS:
+        print(f"Usage: python download_tweets.py <politician> [--backfill]")
+        print(f"Available: {', '.join(POLITICIANS)}")
+        sys.exit(1)
+
+    politician = POLITICIANS[politician_key]
+
+    if "--backfill" in args:
+        end_time = get_earliest_time(politician.csv_path)
         if not end_time:
             print("No existing data found — run without --backfill first.")
             sys.exit(1)
         start_time = "2025-10-01T00:00:00Z"
-        print(f"Backfilling tweets from {start_time} to {end_time}")
-        total = backfill_tweets(end_time=end_time, start_time=start_time)
+        print(f"Backfilling {politician.name} tweets from {start_time} to {end_time}")
+        total = backfill_tweets(politician, end_time=end_time, start_time=start_time)
     else:
-        since_id = get_latest_id("jackie_fielder_tweets.csv")
+        since_id = get_latest_id(politician.csv_path)
         if since_id:
             print(f"Resuming from tweet ID {since_id} (skipping already-downloaded tweets)")
-        total = download_all_tweets(since_id=since_id)
+        total = download_all_tweets(politician, since_id=since_id)
 
     print(f"\nTotal tweets fetched this run: {total}")
-    new_count = finalize_json()
+    new_count = finalize_json(politician)
     print(f"Total new unique tweets added to database: {new_count}")
     if new_count > 0:
-        finalize_csv()
+        finalize_csv(politician)

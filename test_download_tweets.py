@@ -29,6 +29,17 @@ with mock.patch("builtins.open", mock.mock_open(read_data="BEARER_TOKEN = dummy\
     import download_tweets as dt
 
 
+def _make_test_politician(tmpdir):
+    """Create a Politician pointing at temp files for use in tests."""
+    return dt.Politician(
+        name="Test Person",
+        handle="TestHandle",
+        json_path=os.path.join(tmpdir, "tweets.json"),
+        csv_path=os.path.join(tmpdir, "tweets.csv"),
+        staging_path=os.path.join(tmpdir, "tweets_staging.jsonl"),
+    )
+
+
 # ---------------------------------------------------------------------------
 # is_reply_to_other
 # ---------------------------------------------------------------------------
@@ -37,27 +48,27 @@ class TestIsReplyToOther(unittest.TestCase):
 
     def test_type1_direct_reply_to_jackie(self):
         # Starts with @JackieFielder_ → NOT a type-2, should return False
-        self.assertFalse(dt.is_reply_to_other("@JackieFielder_ thanks for sharing"))
+        self.assertFalse(dt.is_reply_to_other("@JackieFielder_ thanks for sharing", dt.JACKIE))
 
     def test_type1_case_insensitive(self):
-        self.assertFalse(dt.is_reply_to_other("@JACKIEFIELDER_ great post"))
-        self.assertFalse(dt.is_reply_to_other("@jackiefielder_ ok"))
+        self.assertFalse(dt.is_reply_to_other("@JACKIEFIELDER_ great post", dt.JACKIE))
+        self.assertFalse(dt.is_reply_to_other("@jackiefielder_ ok", dt.JACKIE))
 
     def test_type2_other_person_first(self):
         # Starts with @someoneelse → type-2, should return True
-        self.assertTrue(dt.is_reply_to_other("@someoneelse @JackieFielder_ check this out"))
+        self.assertTrue(dt.is_reply_to_other("@someoneelse @JackieFielder_ check this out", dt.JACKIE))
 
     def test_type2_multiple_mentions_before_jackie(self):
-        self.assertTrue(dt.is_reply_to_other("@alice @bob @JackieFielder_ agreed"))
+        self.assertTrue(dt.is_reply_to_other("@alice @bob @JackieFielder_ agreed", dt.JACKIE))
 
     def test_type3_no_leading_mention(self):
         # Doesn't start with @ → not a reply at all, should return False
-        self.assertFalse(dt.is_reply_to_other("Jackie Fielder just announced something big"))
-        self.assertFalse(dt.is_reply_to_other("Did you see what @JackieFielder_ said?"))
+        self.assertFalse(dt.is_reply_to_other("Jackie Fielder just announced something big", dt.JACKIE))
+        self.assertFalse(dt.is_reply_to_other("Did you see what @JackieFielder_ said?", dt.JACKIE))
 
     def test_retweet_style(self):
         # RT @ doesn't start with @ so is not a reply
-        self.assertFalse(dt.is_reply_to_other("RT @JackieFielder_ this is a retweet"))
+        self.assertFalse(dt.is_reply_to_other("RT @JackieFielder_ this is a retweet", dt.JACKIE))
 
     def test_rt_filter(self):
         # The RT check used in download loops
@@ -67,10 +78,10 @@ class TestIsReplyToOther(unittest.TestCase):
 
     def test_type1_handle_with_extra_characters(self):
         # @JackieFielder_something is a different handle — should be treated as type-2
-        self.assertTrue(dt.is_reply_to_other("@JackieFielder_something hey"))
+        self.assertTrue(dt.is_reply_to_other("@JackieFielder_something hey", dt.JACKIE))
 
     def test_empty_string(self):
-        self.assertFalse(dt.is_reply_to_other(""))
+        self.assertFalse(dt.is_reply_to_other("", dt.JACKIE))
 
 
 # ---------------------------------------------------------------------------
@@ -169,12 +180,9 @@ class TestBackfillClientSideBoundary(unittest.TestCase):
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
-        self.staging_path = os.path.join(self.tmpdir, "staging.jsonl")
-        self._orig_staging = dt.STAGING_PATH
-        dt.STAGING_PATH = self.staging_path
+        self.politician = _make_test_politician(self.tmpdir)
 
     def tearDown(self):
-        dt.STAGING_PATH = self._orig_staging
         for f in os.listdir(self.tmpdir):
             os.unlink(os.path.join(self.tmpdir, f))
         os.rmdir(self.tmpdir)
@@ -183,6 +191,7 @@ class TestBackfillClientSideBoundary(unittest.TestCase):
         with mock.patch.object(dt, "fetch_page", side_effect=_fake_fetch_page(pages)), \
              mock.patch.object(dt, "save_json"):
             return dt.backfill_tweets(
+                self.politician,
                 end_time="2025-11-07T00:00:00Z",
                 start_time="2025-10-01T00:00:00Z",
             )
@@ -212,7 +221,9 @@ class TestBackfillClientSideBoundary(unittest.TestCase):
             return fetch(*args, **kwargs)
         with mock.patch.object(dt, "fetch_page", side_effect=counting_fetch), \
              mock.patch.object(dt, "save_json"):
-            dt.backfill_tweets(end_time="2025-11-07T00:00:00Z", start_time="2025-10-01T00:00:00Z")
+            dt.backfill_tweets(self.politician,
+                               end_time="2025-11-07T00:00:00Z",
+                               start_time="2025-10-01T00:00:00Z")
         # Should have stopped after page 2, not fetched a third page
         self.assertEqual(call_count[0], 2)
 
@@ -243,90 +254,85 @@ class TestStagingAndFinalize(unittest.TestCase):
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
-        self.json_path = os.path.join(self.tmpdir, "tweets.json")
-        self.staging_path = os.path.join(self.tmpdir, "tweets_staging.jsonl")
-        # Point the module at our temp paths
-        self._orig_staging = dt.STAGING_PATH
-        dt.STAGING_PATH = self.staging_path
+        self.politician = _make_test_politician(self.tmpdir)
 
     def tearDown(self):
-        dt.STAGING_PATH = self._orig_staging
         for f in os.listdir(self.tmpdir):
             os.unlink(os.path.join(self.tmpdir, f))
         os.rmdir(self.tmpdir)
 
     def test_save_json_appends_to_staging(self):
-        dt.save_json(SAMPLE_TWEETS)
-        self.assertTrue(os.path.exists(self.staging_path))
-        with open(self.staging_path) as f:
+        dt.save_json(SAMPLE_TWEETS, self.politician)
+        self.assertTrue(os.path.exists(self.politician.staging_path))
+        with open(self.politician.staging_path) as f:
             lines = [l for l in f if l.strip()]
         self.assertEqual(len(lines), 2)
         self.assertEqual(json.loads(lines[0])["id"], "100")
         self.assertEqual(json.loads(lines[1])["id"], "200")
 
     def test_finalize_merges_staging_into_json(self):
-        dt.save_json(SAMPLE_TWEETS)
-        dt.finalize_json(path=self.json_path)
-        with open(self.json_path) as f:
+        dt.save_json(SAMPLE_TWEETS, self.politician)
+        dt.finalize_json(self.politician)
+        with open(self.politician.json_path) as f:
             data = json.load(f)
         self.assertEqual(len(data["tweets"]), 2)
         ids = {t["id"] for t in data["tweets"]}
         self.assertEqual(ids, {"100", "200"})
 
     def test_finalize_removes_staging_file(self):
-        dt.save_json(SAMPLE_TWEETS)
-        dt.finalize_json(path=self.json_path)
-        self.assertFalse(os.path.exists(self.staging_path))
+        dt.save_json(SAMPLE_TWEETS, self.politician)
+        dt.finalize_json(self.politician)
+        self.assertFalse(os.path.exists(self.politician.staging_path))
 
     def test_finalize_deduplicates(self):
         # Save the same tweets twice (simulates duplicate pages)
-        dt.save_json(SAMPLE_TWEETS)
-        dt.save_json(SAMPLE_TWEETS)
-        dt.finalize_json(path=self.json_path)
-        with open(self.json_path) as f:
+        dt.save_json(SAMPLE_TWEETS, self.politician)
+        dt.save_json(SAMPLE_TWEETS, self.politician)
+        dt.finalize_json(self.politician)
+        with open(self.politician.json_path) as f:
             data = json.load(f)
         self.assertEqual(len(data["tweets"]), 2)
 
     def test_finalize_merges_with_existing_json(self):
         # Pre-populate the JSON with tweet 100
-        with open(self.json_path, "w") as f:
+        with open(self.politician.json_path, "w") as f:
             json.dump({"tweets": [{"id": "100", "created_at": "2025-11-01T00:00:00.000Z",
                                    "author_id": "99", "text": "tweet one",
                                    "edit_history_tweet_ids": ["100"],
                                    "public_metrics": {}}]}, f)
         # Stage tweet 200 (new) and tweet 100 (duplicate)
-        dt.save_json(SAMPLE_TWEETS)
-        dt.finalize_json(path=self.json_path)
-        with open(self.json_path) as f:
+        dt.save_json(SAMPLE_TWEETS, self.politician)
+        dt.finalize_json(self.politician)
+        with open(self.politician.json_path) as f:
             data = json.load(f)
         self.assertEqual(len(data["tweets"]), 2)
 
     def test_finalize_returns_new_count(self):
-        dt.save_json(SAMPLE_TWEETS)
-        new_count = dt.finalize_json(path=self.json_path)
+        dt.save_json(SAMPLE_TWEETS, self.politician)
+        new_count = dt.finalize_json(self.politician)
         self.assertEqual(new_count, 2)
 
     def test_finalize_returns_zero_if_no_staging_file(self):
         # Staging file never created (0 tweets found) — should return 0, not raise
-        result = dt.finalize_json(path=self.json_path)
+        result = dt.finalize_json(self.politician)
         self.assertEqual(result, 0)
 
     def test_finalize_empty_staging_returns_zero_without_error(self):
         # Staging file exists but is empty — no tweets found this run
-        open(self.staging_path, "w").close()
-        result = dt.finalize_json(path=self.json_path)
+        open(self.politician.staging_path, "w").close()
+        result = dt.finalize_json(self.politician)
         self.assertEqual(result, 0)
-        self.assertFalse(os.path.exists(self.staging_path))
+        self.assertFalse(os.path.exists(self.politician.staging_path))
 
     def test_finalize_returns_zero_for_all_duplicates(self):
         # Put both tweets in main JSON already
         records = [{"id": t["id"], "created_at": t["created_at"], "author_id": t["author_id"],
                     "text": t["text"], "edit_history_tweet_ids": t["edit_history_tweet_ids"],
                     "public_metrics": t["public_metrics"]} for t in SAMPLE_TWEETS]
-        with open(self.json_path, "w") as f:
+        with open(self.politician.json_path, "w") as f:
             json.dump({"tweets": records}, f)
-        dt.save_json(SAMPLE_TWEETS)
-        new_count = dt.finalize_json(path=self.json_path)
+        dt.save_json(SAMPLE_TWEETS, self.politician)
+        new_count = dt.finalize_json(self.politician)
         self.assertEqual(new_count, 0)
 
 
@@ -349,7 +355,7 @@ class TestSaveCsv(unittest.TestCase):
             os.unlink(self.tmp.name)
 
     def test_creates_file_with_header(self):
-        dt.save_csv(SAMPLE_TWEETS, path=self.tmp.name)
+        dt.save_csv(SAMPLE_TWEETS, dt.JACKIE, path=self.tmp.name)
         with open(self.tmp.name, newline="") as f:
             rows = list(csv.reader(f))
         self.assertEqual(rows[0], ["id", "created_at", "username", "name", "text",
@@ -358,7 +364,7 @@ class TestSaveCsv(unittest.TestCase):
         self.assertEqual(len(rows), 3)  # header + 2 tweets
 
     def test_correct_field_values(self):
-        dt.save_csv(SAMPLE_TWEETS[:1], path=self.tmp.name)
+        dt.save_csv(SAMPLE_TWEETS[:1], dt.JACKIE, path=self.tmp.name)
         with open(self.tmp.name, newline="") as f:
             reader = csv.DictReader(f)
             row = next(reader)
@@ -376,8 +382,7 @@ class TestFinalizeCsv(unittest.TestCase):
 
     def setUp(self):
         self.tmp_dir = tempfile.mkdtemp()
-        self.json_path = os.path.join(self.tmp_dir, "tweets.json")
-        self.csv_path = os.path.join(self.tmp_dir, "tweets.csv")
+        self.politician = _make_test_politician(self.tmp_dir)
         dt._vader.polarity_scores.return_value = {
             "compound": 0.0, "pos": 0.0, "neg": 0.0, "neu": 1.0
         }
@@ -387,27 +392,27 @@ class TestFinalizeCsv(unittest.TestCase):
         shutil.rmtree(self.tmp_dir)
 
     def _write_json(self, tweets):
-        with open(self.json_path, "w") as f:
+        with open(self.politician.json_path, "w") as f:
             json.dump({"tweets": tweets}, f)
 
     def test_csv_row_count_matches_json(self):
         self._write_json(SAMPLE_TWEETS)
-        dt.finalize_csv(json_path=self.json_path, csv_path=self.csv_path)
-        with open(self.csv_path, newline="") as f:
+        dt.finalize_csv(self.politician)
+        with open(self.politician.csv_path, newline="") as f:
             rows = list(csv.DictReader(f))
         self.assertEqual(len(rows), len(SAMPLE_TWEETS))
 
     def test_csv_contains_correct_ids(self):
         self._write_json(SAMPLE_TWEETS)
-        dt.finalize_csv(json_path=self.json_path, csv_path=self.csv_path)
-        with open(self.csv_path, newline="") as f:
+        dt.finalize_csv(self.politician)
+        with open(self.politician.csv_path, newline="") as f:
             ids = [r["id"] for r in csv.DictReader(f)]
         self.assertEqual(ids, ["100", "200"])
 
     def test_csv_has_all_columns(self):
         self._write_json(SAMPLE_TWEETS)
-        dt.finalize_csv(json_path=self.json_path, csv_path=self.csv_path)
-        with open(self.csv_path, newline="") as f:
+        dt.finalize_csv(self.politician)
+        with open(self.politician.csv_path, newline="") as f:
             fieldnames = csv.DictReader(f).fieldnames
         expected = ["id", "created_at", "username", "name", "text",
                     "likes", "retweets", "replies", "quotes", "impressions",
@@ -416,11 +421,11 @@ class TestFinalizeCsv(unittest.TestCase):
 
     def test_overwrites_existing_csv(self):
         # Write a stale CSV with wrong data, then finalize should replace it
-        with open(self.csv_path, "w") as f:
+        with open(self.politician.csv_path, "w") as f:
             f.write("stale,data\n1,2\n")
         self._write_json(SAMPLE_TWEETS)
-        dt.finalize_csv(json_path=self.json_path, csv_path=self.csv_path)
-        with open(self.csv_path, newline="") as f:
+        dt.finalize_csv(self.politician)
+        with open(self.politician.csv_path, newline="") as f:
             rows = list(csv.DictReader(f))
         self.assertEqual(len(rows), len(SAMPLE_TWEETS))
         self.assertEqual(rows[0]["id"], "100")
@@ -507,39 +512,39 @@ class TestGetSentiment(unittest.TestCase):
 class TestGetReplyType(unittest.TestCase):
 
     def test_direct_reply_starts_with_jackiefielder(self):
-        self.assertEqual(dt.get_reply_type("@JackieFielder_ great point"), "Direct reply")
+        self.assertEqual(dt.get_reply_type("@JackieFielder_ great point", dt.JACKIE), "Direct reply")
 
     def test_direct_reply_case_insensitive(self):
-        self.assertEqual(dt.get_reply_type("@JACKIEFIELDER_ ok"), "Direct reply")
-        self.assertEqual(dt.get_reply_type("@jackiefielder_ ok"), "Direct reply")
+        self.assertEqual(dt.get_reply_type("@JACKIEFIELDER_ ok", dt.JACKIE), "Direct reply")
+        self.assertEqual(dt.get_reply_type("@jackiefielder_ ok", dt.JACKIE), "Direct reply")
 
     def test_mention_contains_handle_mid_tweet(self):
         self.assertEqual(
-            dt.get_reply_type("Did you see what @JackieFielder_ said?"), "Mention")
+            dt.get_reply_type("Did you see what @JackieFielder_ said?", dt.JACKIE), "Mention")
 
     def test_mention_name_only_no_handle(self):
         # Plain name with no @ is "Not tagged"
-        self.assertEqual(dt.get_reply_type("Jackie Fielder made a statement today"), "Not tagged")
+        self.assertEqual(dt.get_reply_type("Jackie Fielder made a statement today", dt.JACKIE), "Not tagged")
 
     def test_not_tagged_no_reference(self):
-        self.assertEqual(dt.get_reply_type("San Francisco politics are wild"), "Not tagged")
+        self.assertEqual(dt.get_reply_type("San Francisco politics are wild", dt.JACKIE), "Not tagged")
 
     def test_mention_handle_after_other_text(self):
         self.assertEqual(
-            dt.get_reply_type("Someone should ask @JackieFielder_ about this"), "Mention")
+            dt.get_reply_type("Someone should ask @JackieFielder_ about this", dt.JACKIE), "Mention")
 
     def test_thread_mention_other_person_first(self):
         # Starts with another @handle — Jackie is tagged in the thread but not the addressee
         self.assertEqual(
-            dt.get_reply_type("@someoneelse @JackieFielder_ check this out"), "Thread mention")
+            dt.get_reply_type("@someoneelse @JackieFielder_ check this out", dt.JACKIE), "Thread mention")
 
     def test_thread_mention_multiple_handles_before_jackie(self):
         self.assertEqual(
-            dt.get_reply_type("@alice @bob @JackieFielder_ thoughts?"), "Thread mention")
+            dt.get_reply_type("@alice @bob @JackieFielder_ thoughts?", dt.JACKIE), "Thread mention")
 
     def test_thread_mention_case_insensitive(self):
         self.assertEqual(
-            dt.get_reply_type("@someoneelse @JACKIEFIELDER_ see above"), "Thread mention")
+            dt.get_reply_type("@someoneelse @JACKIEFIELDER_ see above", dt.JACKIE), "Thread mention")
 
     def test_every_csv_row_has_valid_reply_type(self):
         valid = {"Direct reply", "Mention", "Not tagged", "Thread mention"}
@@ -610,7 +615,6 @@ class TestDataIntegrity(unittest.TestCase):
     def test_csv_contains_no_retweets(self):
         rts = [t for t in self._load_csv_texts() if t.startswith("RT @")]
         self.assertEqual(rts, [], f"{len(rts)} RT tweets found in CSV")
-
 
     def test_json_contains_no_duplicate_ids(self):
         with open(JSON_PATH) as f:
