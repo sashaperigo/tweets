@@ -71,12 +71,15 @@ def get_reply_type(text):
     """Classify a tweet's relationship to @JackieFielder_.
 
     Returns:
-        "Direct reply" — tweet starts with @JackieFielder_ (type 1)
-        "Mention"      — tweet contains @JackieFielder_ but doesn't start with it (type 3)
-        "Not tagged"   — tweet doesn't contain @JackieFielder_ at all
+        "Direct reply"   — tweet starts with @JackieFielder_
+        "Thread mention" — tweet starts with two or more @handles, Jackie is among them but not first
+        "Mention"        — tweet contains @JackieFielder_ embedded in regular text (not a reply)
+        "Not tagged"     — tweet doesn't contain @JackieFielder_ at all
     """
     if _RE_JACKIE_START.match(text):
         return "Direct reply"
+    if is_reply_to_other(text):
+        return "Thread mention"
     if _RE_JACKIE_ANYWHERE.search(text):
         return "Mention"
     return "Not tagged"

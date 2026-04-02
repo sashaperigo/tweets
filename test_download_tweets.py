@@ -481,8 +481,21 @@ class TestGetReplyType(unittest.TestCase):
         self.assertEqual(
             dt.get_reply_type("Someone should ask @JackieFielder_ about this"), "Mention")
 
+    def test_thread_mention_other_person_first(self):
+        # Starts with another @handle — Jackie is tagged in the thread but not the addressee
+        self.assertEqual(
+            dt.get_reply_type("@someoneelse @JackieFielder_ check this out"), "Thread mention")
+
+    def test_thread_mention_multiple_handles_before_jackie(self):
+        self.assertEqual(
+            dt.get_reply_type("@alice @bob @JackieFielder_ thoughts?"), "Thread mention")
+
+    def test_thread_mention_case_insensitive(self):
+        self.assertEqual(
+            dt.get_reply_type("@someoneelse @JACKIEFIELDER_ see above"), "Thread mention")
+
     def test_every_csv_row_has_valid_reply_type(self):
-        valid = {"Direct reply", "Mention", "Not tagged"}
+        valid = {"Direct reply", "Mention", "Not tagged", "Thread mention"}
         with open(CSV_PATH, newline="", encoding="utf-8") as f:
             rows = list(csv.DictReader(f))
         self.assertIn("reply_type", rows[0].keys(),
