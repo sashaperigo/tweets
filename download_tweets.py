@@ -34,6 +34,21 @@ EXPANSIONS = "author_id"
 MAX_RESULTS = 100  # max per page for recent search
 
 
+def get_reply_type(text):
+    """Classify a tweet's relationship to @JackieFielder_.
+
+    Returns:
+        "Direct reply" — tweet starts with @JackieFielder_ (type 1)
+        "Mention"      — tweet contains @JackieFielder_ but doesn't start with it (type 3)
+        "Not tagged"   — tweet doesn't contain @JackieFielder_ at all
+    """
+    if re.match(r"^@JackieFielder_\b", text, re.IGNORECASE):
+        return "Direct reply"
+    if re.search(r"@JackieFielder_\b", text, re.IGNORECASE):
+        return "Mention"
+    return "Not tagged"
+
+
 def is_reply_to_other(text):
     """Return True for type-2 tweets: replies where Jackie is tagged but isn't
     the first @mention (i.e. the tweet is directed at someone else)."""
@@ -267,7 +282,8 @@ def save_csv(tweets, path="jackie_fielder_tweets.csv"):
         writer = csv.writer(f)
         if not append:
             writer.writerow(["id", "created_at", "username", "name", "text",
-                             "likes", "retweets", "replies", "quotes", "impressions"])
+                             "likes", "retweets", "replies", "quotes", "impressions",
+                             "reply_type"])
         for t in tweets:
             m = t.get("public_metrics", {})
             writer.writerow([
@@ -281,6 +297,7 @@ def save_csv(tweets, path="jackie_fielder_tweets.csv"):
                 m.get("reply_count", 0),
                 m.get("quote_count", 0),
                 m.get("impression_count", 0),
+                get_reply_type(t["text"]),
             ])
     print(f"Saved CSV to {path}")
 
