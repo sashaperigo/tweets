@@ -387,22 +387,24 @@ if __name__ == "__main__":
 
     politician = POLITICIANS[politician_key]
 
-    if "--backfill" in args:
-        end_time = get_earliest_time(politician.csv_path)
-        if not end_time:
-            print("No existing data found — run without --backfill first.")
-            sys.exit(1)
-        start_time = "2025-10-01T00:00:00Z"
-        print(f"Backfilling {politician.name} tweets from {start_time} to {end_time}")
-        total = backfill_tweets(politician, end_time=end_time, start_time=start_time)
-    else:
-        since_id = get_latest_id(politician.csv_path)
-        if since_id:
-            print(f"Resuming from tweet ID {since_id} (skipping already-downloaded tweets)")
-        total = download_all_tweets(politician, since_id=since_id)
-
-    print(f"\nTotal tweets fetched this run: {total}")
-    new_count = finalize_json(politician)
-    print(f"Total new unique tweets added to database: {new_count}")
-    if new_count > 0:
-        finalize_csv(politician)
+    total = 0
+    try:
+        if "--backfill" in args:
+            end_time = get_earliest_time(politician.csv_path)
+            if not end_time:
+                print("No existing data found — run without --backfill first.")
+                sys.exit(1)
+            start_time = "2025-10-01T00:00:00Z"
+            print(f"Backfilling {politician.name} tweets from {start_time} to {end_time}")
+            total = backfill_tweets(politician, end_time=end_time, start_time=start_time)
+        else:
+            since_id = get_latest_id(politician.csv_path)
+            if since_id:
+                print(f"Resuming from tweet ID {since_id} (skipping already-downloaded tweets)")
+            total = download_all_tweets(politician, since_id=since_id)
+    finally:
+        print(f"\nTotal tweets fetched this run: {total}")
+        new_count = finalize_json(politician)
+        print(f"Total new unique tweets added to database: {new_count}")
+        if new_count > 0:
+            finalize_csv(politician)
