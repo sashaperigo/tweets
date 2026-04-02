@@ -33,6 +33,10 @@ USER_FIELDS = "username,name"
 EXPANSIONS = "author_id"
 MAX_RESULTS = 100  # max per page for recent search
 
+_RE_JACKIE_START   = re.compile(r"^@JackieFielder_\b", re.IGNORECASE)
+_RE_JACKIE_ANYWHERE = re.compile(r"@JackieFielder_\b", re.IGNORECASE)
+_RE_FIRST_MENTION  = re.compile(r"@(\w+)")
+
 
 def get_reply_type(text):
     """Classify a tweet's relationship to @JackieFielder_.
@@ -42,9 +46,9 @@ def get_reply_type(text):
         "Mention"      — tweet contains @JackieFielder_ but doesn't start with it (type 3)
         "Not tagged"   — tweet doesn't contain @JackieFielder_ at all
     """
-    if re.match(r"^@JackieFielder_\b", text, re.IGNORECASE):
+    if _RE_JACKIE_START.match(text):
         return "Direct reply"
-    if re.search(r"@JackieFielder_\b", text, re.IGNORECASE):
+    if _RE_JACKIE_ANYWHERE.search(text):
         return "Mention"
     return "Not tagged"
 
@@ -54,7 +58,7 @@ def is_reply_to_other(text):
     the first @mention (i.e. the tweet is directed at someone else)."""
     if not text.startswith("@"):
         return False
-    first_mention = re.match(r"@(\w+)", text)
+    first_mention = _RE_FIRST_MENTION.match(text)
     return first_mention and first_mention.group(1).lower() != "jackiefielder_"
 
 
