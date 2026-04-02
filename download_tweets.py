@@ -11,6 +11,10 @@ import csv
 import time
 import os
 
+from nltk.sentiment.vader import SentimentIntensityAnalyzer
+
+_vader = SentimentIntensityAnalyzer()
+
 # Load credentials from xapi-keys file
 def load_bearer_token(keys_file="xapi-keys"):
     with open(keys_file) as f:
@@ -36,6 +40,21 @@ MAX_RESULTS = 100  # max per page for recent search
 _RE_JACKIE_START   = re.compile(r"^@JackieFielder_\b", re.IGNORECASE)
 _RE_JACKIE_ANYWHERE = re.compile(r"@JackieFielder_\b", re.IGNORECASE)
 _RE_FIRST_MENTION  = re.compile(r"@(\w+)")
+
+
+def get_sentiment(text):
+    """Return (label, compound_score) for text using VADER.
+
+    label is 'positive' (compound >= 0.05), 'negative' (compound <= -0.05),
+    or 'neutral' otherwise.
+    """
+    scores = _vader.polarity_scores(text)
+    compound = scores["compound"]
+    if compound >= 0.05:
+        return "positive", compound
+    if compound <= -0.05:
+        return "negative", compound
+    return "neutral", compound
 
 
 def get_reply_type(text):
@@ -287,9 +306,10 @@ def save_csv(tweets, path="jackie_fielder_tweets.csv"):
         if not append:
             writer.writerow(["id", "created_at", "username", "name", "text",
                              "likes", "retweets", "replies", "quotes", "impressions",
-                             "reply_type"])
+                             "reply_type", "sentiment", "sentiment_score"])
         for t in tweets:
             m = t.get("public_metrics", {})
+            sentiment_label, sentiment_score = get_sentiment(t["text"])
             writer.writerow([
                 t["id"],
                 t["created_at"],
@@ -302,6 +322,8 @@ def save_csv(tweets, path="jackie_fielder_tweets.csv"):
                 m.get("quote_count", 0),
                 m.get("impression_count", 0),
                 get_reply_type(t["text"]),
+                sentiment_label,
+                sentiment_score,
             ])
     print(f"Saved CSV to {path}")
 

@@ -15,8 +15,17 @@ with patch("builtins.open", side_effect=lambda *a, **k: (_ for _ in ()).throw(Fi
 
 import unittest.mock as mock
 
-# Patch load_bearer_token before importing the module
-with mock.patch("builtins.open", mock.mock_open(read_data="BEARER_TOKEN = dummy\n")):
+# Pre-import vader so it's in sys.modules before builtins.open is mocked.
+# (mock.patch resolves module paths by importing them; if nltk is not yet imported,
+# that import chain hits dateutil which reads binary timezone files — and fails if
+# open is already mocked to return strings.)
+import nltk.sentiment.vader  # noqa: E402
+
+# Patch load_bearer_token and SentimentIntensityAnalyzer before importing the module.
+# The open mock injects a fake bearer token; the SIA mock prevents lexicon file reads
+# (the real _vader is replaced per-test via _mock_vader).
+with mock.patch("builtins.open", mock.mock_open(read_data="BEARER_TOKEN = dummy\n")), \
+     mock.patch("nltk.sentiment.vader.SentimentIntensityAnalyzer"):
     import download_tweets as dt
 
 
@@ -331,6 +340,11 @@ class TestSaveCsv(unittest.TestCase):
         self.tmp = tempfile.NamedTemporaryFile(suffix=".csv", delete=False)
         self.tmp.close()
         os.unlink(self.tmp.name)  # start with no file
+        # _vader is a MagicMock from import-time patching; give polarity_scores
+        # a real return value so get_sentiment works without the VADER lexicon.
+        dt._vader.polarity_scores.return_value = {
+            "compound": 0.0, "pos": 0.0, "neg": 0.0, "neu": 1.0
+        }
 
     def tearDown(self):
         if os.path.exists(self.tmp.name):
@@ -342,7 +356,7 @@ class TestSaveCsv(unittest.TestCase):
             rows = list(csv.reader(f))
         self.assertEqual(rows[0], ["id", "created_at", "username", "name", "text",
                                    "likes", "retweets", "replies", "quotes", "impressions",
-                                   "reply_type"])
+                                   "reply_type", "sentiment", "sentiment_score"])
         self.assertEqual(len(rows), 3)  # header + 2 tweets
 
     def test_appends_without_duplicate_header(self):
@@ -363,6 +377,80 @@ class TestSaveCsv(unittest.TestCase):
         self.assertEqual(row["username"], "user1")
         self.assertEqual(row["likes"], "1")
         self.assertEqual(row["impressions"], "10")
+
+
+# ---------------------------------------------------------------------------
+# get_sentiment
+# ---------------------------------------------------------------------------
+
+class TestGetSentiment(unittest.TestCase):
+
+    def _mock_vader(self, compound):
+        """Return a context manager that mocks polarity_scores to return compound."""
+        return mock.patch.object(
+            dt._vader, "polarity_scores",
+            return_value={"compound": compound, "pos": 0, "neg": 0, "neu": 0}
+        )
+
+    def test_positive_label_for_high_compound(self):
+        with self._mock_vader(0.5):
+            label, score = dt.get_sentiment("great job!")
+        self.assertEqual(label, "positive")
+        self.assertAlmostEqual(score, 0.5)
+
+    def test_negative_label_for_low_compound(self):
+        with self._mock_vader(-0.6):
+            label, score = dt.get_sentiment("terrible awful")
+        self.assertEqual(label, "negative")
+        self.assertAlmostEqual(score, -0.6)
+
+    def test_neutral_label_for_near_zero_compound(self):
+        with self._mock_vader(0.0):
+            label, score = dt.get_sentiment("today is tuesday")
+        self.assertEqual(label, "neutral")
+        self.assertAlmostEqual(score, 0.0)
+
+    def test_boundary_positive_at_0_05(self):
+        with self._mock_vader(0.05):
+            label, _ = dt.get_sentiment("ok")
+        self.assertEqual(label, "positive")
+
+    def test_boundary_negative_at_minus_0_05(self):
+        with self._mock_vader(-0.05):
+            label, _ = dt.get_sentiment("ok")
+        self.assertEqual(label, "negative")
+
+    def test_just_below_positive_boundary_is_neutral(self):
+        with self._mock_vader(0.04):
+            label, _ = dt.get_sentiment("ok")
+        self.assertEqual(label, "neutral")
+
+    def test_just_above_negative_boundary_is_neutral(self):
+        with self._mock_vader(-0.04):
+            label, _ = dt.get_sentiment("ok")
+        self.assertEqual(label, "neutral")
+
+    def test_every_csv_row_has_valid_sentiment(self):
+        valid_labels = {"positive", "negative", "neutral"}
+        with open(CSV_PATH, newline="", encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+        self.assertIn("sentiment", rows[0].keys(),
+                      "CSV is missing 'sentiment' column")
+        self.assertIn("sentiment_score", rows[0].keys(),
+                      "CSV is missing 'sentiment_score' column")
+        invalid_label = [r for r in rows if r.get("sentiment") not in valid_labels]
+        self.assertEqual(invalid_label, [],
+                         f"{len(invalid_label)} rows have invalid sentiment label")
+        invalid_score = []
+        for r in rows:
+            try:
+                score = float(r.get("sentiment_score", ""))
+                if not (-1.0 <= score <= 1.0):
+                    invalid_score.append(r)
+            except (ValueError, TypeError):
+                invalid_score.append(r)
+        self.assertEqual(invalid_score, [],
+                         f"{len(invalid_score)} rows have invalid sentiment_score")
 
 
 # ---------------------------------------------------------------------------
