@@ -128,6 +128,87 @@ class TestGetIds(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# backfill_tweets chunking logic
+# ---------------------------------------------------------------------------
+
+def _make_api_tweet(tweet_id, created_at, text="hello Jackie Fielder", author_id="1"):
+    return {
+        "id": tweet_id,
+        "created_at": created_at,
+        "author_id": author_id,
+        "text": text,
+        "edit_history_tweet_ids": [tweet_id],
+        "public_metrics": {"like_count": 0, "retweet_count": 0,
+                           "reply_count": 0, "quote_count": 0, "impression_count": 0},
+    }
+
+
+def _fake_fetch_page(pages):
+    """Returns a fetch_page side-effect that yields pages in order."""
+    pages = list(pages)
+    call_count = [0]
+    def _fetch(*args, **kwargs):
+        i = call_count[0]
+        call_count[0] += 1
+        if i < len(pages):
+            return pages[i]
+        return {"data": [], "meta": {"result_count": 0}}
+    return _fetch
+
+
+class TestBackfillClientSideBoundary(unittest.TestCase):
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.staging_path = os.path.join(self.tmpdir, "staging.jsonl")
+        self._orig_staging = dt.STAGING_PATH
+        dt.STAGING_PATH = self.staging_path
+
+    def tearDown(self):
+        dt.STAGING_PATH = self._orig_staging
+        for f in os.listdir(self.tmpdir):
+            os.unlink(os.path.join(self.tmpdir, f))
+        os.rmdir(self.tmpdir)
+
+    def _run_backfill(self, pages):
+        with mock.patch.object(dt, "fetch_page", side_effect=_fake_fetch_page(pages)), \
+             mock.patch.object(dt, "save_csv"):
+            return dt.backfill_tweets(
+                end_time="2025-11-07T00:00:00Z",
+                start_time="2025-10-01T00:00:00Z",
+            )
+
+    def test_tweets_within_range_are_saved(self):
+        pages = [{"data": [
+            _make_api_tweet("1", "2025-11-06T12:00:00Z"),
+            _make_api_tweet("2", "2025-10-15T12:00:00Z"),
+        ], "includes": {"users": [{"id": "1", "username": "u", "name": "U"}]},
+           "meta": {"result_count": 2, "next_token": None}}]
+        count = self._run_backfill(pages)
+        self.assertEqual(count, 2)
+
+    def test_stops_when_tweet_older_than_start_time(self):
+        page1 = {"data": [
+            _make_api_tweet("1", "2025-10-20T00:00:00Z"),
+        ], "includes": {"users": [{"id": "1", "username": "u", "name": "U"}]},
+           "meta": {"result_count": 1, "next_token": "tok"}}
+        page2 = {"data": [
+            _make_api_tweet("2", "2025-09-15T00:00:00Z"),  # before start_time — stop
+        ], "includes": {"users": [{"id": "1", "username": "u", "name": "U"}]},
+           "meta": {"result_count": 1, "next_token": "tok2"}}
+        fetch = _fake_fetch_page([page1, page2])
+        call_count = [0]
+        def counting_fetch(*args, **kwargs):
+            call_count[0] += 1
+            return fetch(*args, **kwargs)
+        with mock.patch.object(dt, "fetch_page", side_effect=counting_fetch), \
+             mock.patch.object(dt, "save_csv"):
+            dt.backfill_tweets(end_time="2025-11-07T00:00:00Z", start_time="2025-10-01T00:00:00Z")
+        # Should have stopped after page 2, not fetched a third page
+        self.assertEqual(call_count[0], 2)
+
+
+# ---------------------------------------------------------------------------
 # save_json (staging) + finalize_json
 # ---------------------------------------------------------------------------
 
@@ -216,10 +297,10 @@ class TestStagingAndFinalize(unittest.TestCase):
         new_count = dt.finalize_json(path=self.json_path)
         self.assertEqual(new_count, 2)
 
-    def test_finalize_raises_if_no_staging_file(self):
-        # Staging file never created — should raise, not silently succeed
-        with self.assertRaises(FileNotFoundError):
-            dt.finalize_json(path=self.json_path)
+    def test_finalize_returns_zero_if_no_staging_file(self):
+        # Staging file never created (0 tweets found) — should return 0, not raise
+        result = dt.finalize_json(path=self.json_path)
+        self.assertEqual(result, 0)
 
     def test_finalize_empty_staging_returns_zero_without_error(self):
         # Staging file exists but is empty — no tweets found this run
