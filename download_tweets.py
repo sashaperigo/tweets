@@ -140,8 +140,8 @@ def fetch_page(politician, next_token=None, since_id=None, end_time=None, url=No
     else:
         if since_id:
             params["since_id"] = since_id
-        if end_time:
-            params["end_time"] = end_time
+    if end_time:
+        params["end_time"] = end_time
 
     for attempt in range(5):
         print(f"  Fetching from API{' (retry ' + str(attempt) + ')' if attempt else ''}...")
