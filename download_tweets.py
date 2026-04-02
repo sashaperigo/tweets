@@ -142,20 +142,36 @@ def get_earliest_time(csv_path):
     return min(dates) if dates else None
 
 
-def backfill_chunk(start_time, end_time):
-    """Fetch all tweets in a single time window, paginating until exhausted."""
+def backfill_tweets(end_time, start_time):
+    """Backfill tweets older than end_time, stopping at start_time.
+
+    Passes end_time to the API so results begin just before our earliest
+    saved tweet and go backwards. Enforces start_time client-side: filters
+    out tweets older than start_time and stops paginating when we hit one.
+    Uses search/all — requires a paid X API tier.
+    """
+    from datetime import datetime
+
+    start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+    end_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+
     users_by_id = {}
     next_token = None
     total = 0
 
     while True:
-        data = fetch_page(next_token, start_time=start_time, end_time=end_time, url=SEARCH_URL_ALL)
+        data = fetch_page(next_token, end_time=end_time, url=SEARCH_URL_ALL)
 
         for user in data.get("includes", {}).get("users", []):
             users_by_id[user["id"]] = user
 
         batch = []
+        hit_boundary = False
         for tweet in data.get("data", []):
+            tweet_dt = datetime.fromisoformat(tweet["created_at"].replace("Z", "+00:00"))
+            if tweet_dt < start_dt:
+                hit_boundary = True
+                continue
             if is_reply_to_other(tweet["text"]) or tweet["text"].startswith("RT @"):
                 continue
             user = users_by_id.get(tweet.get("author_id"), {})
@@ -172,40 +188,12 @@ def backfill_chunk(start_time, end_time):
         meta = data.get("meta", {})
         next_token = meta.get("next_token")
         result_count = meta.get("result_count", 0)
-        print(f"--- page done: {result_count} fetched, {total} saved for this chunk ---")
+        print(f"--- page done: {result_count} fetched, {total} new saved so far ---")
 
-        if not next_token:
+        if not next_token or hit_boundary:
             break
 
         time.sleep(1)
-
-    return total
-
-
-def backfill_tweets(end_time, start_time):
-    """Backfill tweets from start_time to end_time by querying one month at a time.
-    Uses search/all — requires a paid X API tier.
-    """
-    from datetime import datetime, timezone, timedelta
-
-    start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-    end_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
-
-    total = 0
-    chunk_start = start_dt
-    while chunk_start < end_dt:
-        # Advance one month at a time
-        if chunk_start.month == 12:
-            chunk_end = chunk_start.replace(year=chunk_start.year + 1, month=1)
-        else:
-            chunk_end = chunk_start.replace(month=chunk_start.month + 1)
-        chunk_end = min(chunk_end, end_dt)
-
-        cs = chunk_start.strftime("%Y-%m-%dT%H:%M:%SZ")
-        ce = chunk_end.strftime("%Y-%m-%dT%H:%M:%SZ")
-        print(f"\n=== Backfilling {cs} → {ce} ===")
-        total += backfill_chunk(cs, ce)
-        chunk_start = chunk_end
 
     return total
 
@@ -242,20 +230,16 @@ def finalize_json(path="jackie_fielder_tweets.json"):
     print(f"  Loaded {len(existing)} existing tweets.")
 
     print("  Loading staged tweets...")
-    if not os.path.exists(STAGING_PATH):
-        raise FileNotFoundError(
-            f"Staging file '{STAGING_PATH}' not found. "
-            "Was save_json() called during this run?"
-        )
     staged = []
-    with open(STAGING_PATH, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                staged.append(json.loads(line))
-    if not staged:
-        print("  Staging file is empty — no new tweets were found this run.")
+    if os.path.exists(STAGING_PATH):
+        with open(STAGING_PATH, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    staged.append(json.loads(line))
         os.remove(STAGING_PATH)
+    if not staged:
+        print("  No new tweets were found this run.")
         return 0
     print(f"  Loaded {len(staged)} staged tweets.")
 
@@ -273,8 +257,7 @@ def finalize_json(path="jackie_fielder_tweets.json"):
     with open(path, "w") as f:
         json.dump({"tweets": merged}, f, indent=2)
 
-    os.remove(STAGING_PATH)
-    print(f"  Done. Staging file removed.")
+    print(f"  Done.")
     return len(new_tweets)
 
 
@@ -310,7 +293,7 @@ if __name__ == "__main__":
         if not end_time:
             print("No existing data found — run without --backfill first.")
             sys.exit(1)
-        start_time = "2025-11-01T00:00:00Z"
+        start_time = "2025-10-01T00:00:00Z"
         print(f"Backfilling tweets from {start_time} to {end_time}")
         total = backfill_tweets(end_time=end_time, start_time=start_time)
     else:
