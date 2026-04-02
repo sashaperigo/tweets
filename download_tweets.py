@@ -10,6 +10,7 @@ import json
 import csv
 import time
 import os
+from datetime import datetime
 
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 
@@ -94,7 +95,7 @@ def is_reply_to_other(text):
     return first_mention and first_mention.group(1).lower() != "jackiefielder_"
 
 
-def fetch_page(next_token=None, since_id=None, until_id=None, start_time=None, end_time=None, url=None):
+def fetch_page(next_token=None, since_id=None, end_time=None, url=None):
     headers = {"Authorization": f"Bearer {BEARER_TOKEN}"}
     params = {
         "query": QUERY,
@@ -108,10 +109,6 @@ def fetch_page(next_token=None, since_id=None, until_id=None, start_time=None, e
     else:
         if since_id:
             params["since_id"] = since_id
-        if until_id:
-            params["until_id"] = until_id
-        if start_time:
-            params["start_time"] = start_time
         if end_time:
             params["end_time"] = end_time
 
@@ -200,10 +197,7 @@ def backfill_tweets(end_time, start_time):
     out tweets older than start_time and stops paginating when we hit one.
     Uses search/all — requires a paid X API tier.
     """
-    from datetime import datetime
-
     start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-    end_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
 
     users_by_id = {}
     next_token = None
@@ -250,7 +244,7 @@ def backfill_tweets(end_time, start_time):
 STAGING_PATH = "jackie_fielder_tweets_staging.jsonl"
 
 
-def save_json(tweets, path="jackie_fielder_tweets.json"):
+def save_json(tweets):
     """Append new tweets to a staging JSONL file (fast, O(1) per batch)."""
     print(f"  Appending {len(tweets)} tweets to staging file...")
     with open(STAGING_PATH, "a", encoding="utf-8") as f:

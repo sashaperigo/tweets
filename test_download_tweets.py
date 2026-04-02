@@ -256,7 +256,7 @@ class TestStagingAndFinalize(unittest.TestCase):
         os.rmdir(self.tmpdir)
 
     def test_save_json_appends_to_staging(self):
-        dt.save_json(SAMPLE_TWEETS, path=self.json_path)
+        dt.save_json(SAMPLE_TWEETS)
         self.assertTrue(os.path.exists(self.staging_path))
         with open(self.staging_path) as f:
             lines = [l for l in f if l.strip()]
@@ -265,7 +265,7 @@ class TestStagingAndFinalize(unittest.TestCase):
         self.assertEqual(json.loads(lines[1])["id"], "200")
 
     def test_finalize_merges_staging_into_json(self):
-        dt.save_json(SAMPLE_TWEETS, path=self.json_path)
+        dt.save_json(SAMPLE_TWEETS)
         dt.finalize_json(path=self.json_path)
         with open(self.json_path) as f:
             data = json.load(f)
@@ -274,14 +274,14 @@ class TestStagingAndFinalize(unittest.TestCase):
         self.assertEqual(ids, {"100", "200"})
 
     def test_finalize_removes_staging_file(self):
-        dt.save_json(SAMPLE_TWEETS, path=self.json_path)
+        dt.save_json(SAMPLE_TWEETS)
         dt.finalize_json(path=self.json_path)
         self.assertFalse(os.path.exists(self.staging_path))
 
     def test_finalize_deduplicates(self):
         # Save the same tweets twice (simulates duplicate pages)
-        dt.save_json(SAMPLE_TWEETS, path=self.json_path)
-        dt.save_json(SAMPLE_TWEETS, path=self.json_path)
+        dt.save_json(SAMPLE_TWEETS)
+        dt.save_json(SAMPLE_TWEETS)
         dt.finalize_json(path=self.json_path)
         with open(self.json_path) as f:
             data = json.load(f)
@@ -295,14 +295,14 @@ class TestStagingAndFinalize(unittest.TestCase):
                                    "edit_history_tweet_ids": ["100"],
                                    "public_metrics": {}}]}, f)
         # Stage tweet 200 (new) and tweet 100 (duplicate)
-        dt.save_json(SAMPLE_TWEETS, path=self.json_path)
+        dt.save_json(SAMPLE_TWEETS)
         dt.finalize_json(path=self.json_path)
         with open(self.json_path) as f:
             data = json.load(f)
         self.assertEqual(len(data["tweets"]), 2)
 
     def test_finalize_returns_new_count(self):
-        dt.save_json(SAMPLE_TWEETS, path=self.json_path)
+        dt.save_json(SAMPLE_TWEETS)
         new_count = dt.finalize_json(path=self.json_path)
         self.assertEqual(new_count, 2)
 
@@ -325,7 +325,7 @@ class TestStagingAndFinalize(unittest.TestCase):
                     "public_metrics": t["public_metrics"]} for t in SAMPLE_TWEETS]
         with open(self.json_path, "w") as f:
             json.dump({"tweets": records}, f)
-        dt.save_json(SAMPLE_TWEETS, path=self.json_path)
+        dt.save_json(SAMPLE_TWEETS)
         new_count = dt.finalize_json(path=self.json_path)
         self.assertEqual(new_count, 0)
 
