@@ -356,7 +356,7 @@ class TestSaveCsv(unittest.TestCase):
             rows = list(csv.reader(f))
         self.assertEqual(rows[0], ["id", "created_at", "username", "name", "text",
                                    "likes", "retweets", "replies", "quotes", "impressions",
-                                   "reply_type", "sentiment", "sentiment_score"])
+                                   "reply_type", "sentiment", "sentiment_score", "is_excluded"])
         self.assertEqual(len(rows), 3)  # header + 2 tweets
 
     def test_appends_without_duplicate_header(self):
@@ -490,6 +490,39 @@ class TestGetReplyType(unittest.TestCase):
         invalid = [r for r in rows if r.get("reply_type") not in valid]
         self.assertEqual(invalid, [],
                          f"{len(invalid)} rows have missing or invalid reply_type")
+
+
+# ---------------------------------------------------------------------------
+# get_is_excluded
+# ---------------------------------------------------------------------------
+
+class TestGetIsExcluded(unittest.TestCase):
+
+    def test_excluded_account_returns_true(self):
+        for username in ["sfpdcallsbot", "sfchronicle", "kqednews",
+                         "mlnow", "sfist", "sfstandard", "48hills"]:
+            with self.subTest(username=username):
+                self.assertTrue(dt.get_is_excluded(username))
+
+    def test_excluded_account_case_insensitive(self):
+        self.assertTrue(dt.get_is_excluded("SFChronicle"))
+        self.assertTrue(dt.get_is_excluded("KQEDNEWS"))
+
+    def test_regular_account_returns_false(self):
+        self.assertFalse(dt.get_is_excluded("somerandomperson"))
+        self.assertFalse(dt.get_is_excluded("JackieFielder_"))
+
+    def test_empty_string_returns_false(self):
+        self.assertFalse(dt.get_is_excluded(""))
+
+    def test_every_csv_row_has_is_excluded_column(self):
+        with open(CSV_PATH, newline="", encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+        self.assertIn("is_excluded", rows[0].keys(),
+                      "CSV is missing 'is_excluded' column")
+        invalid = [r for r in rows if r.get("is_excluded") not in {"True", "False"}]
+        self.assertEqual(invalid, [],
+                         f"{len(invalid)} rows have invalid is_excluded value")
 
 
 # ---------------------------------------------------------------------------

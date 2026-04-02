@@ -37,9 +37,19 @@ USER_FIELDS = "username,name"
 EXPANSIONS = "author_id"
 MAX_RESULTS = 100  # max per page for recent search
 
+EXCLUDED_ACCOUNTS = {
+    "sfpdcallsbot", "sfchronicle", "kqednews",
+    "mlnow", "sfist", "sfstandard", "48hills",
+}
+
 _RE_JACKIE_START   = re.compile(r"^@JackieFielder_\b", re.IGNORECASE)
 _RE_JACKIE_ANYWHERE = re.compile(r"@JackieFielder_\b", re.IGNORECASE)
 _RE_FIRST_MENTION  = re.compile(r"@(\w+)")
+
+
+def get_is_excluded(username):
+    """Return True if username is in the excluded accounts list (case-insensitive)."""
+    return username.lower() in EXCLUDED_ACCOUNTS
 
 
 def get_sentiment(text):
@@ -306,7 +316,7 @@ def save_csv(tweets, path="jackie_fielder_tweets.csv"):
         if not append:
             writer.writerow(["id", "created_at", "username", "name", "text",
                              "likes", "retweets", "replies", "quotes", "impressions",
-                             "reply_type", "sentiment", "sentiment_score"])
+                             "reply_type", "sentiment", "sentiment_score", "is_excluded"])
         for t in tweets:
             m = t.get("public_metrics", {})
             sentiment_label, sentiment_score = get_sentiment(t["text"])
@@ -324,6 +334,7 @@ def save_csv(tweets, path="jackie_fielder_tweets.csv"):
                 get_reply_type(t["text"]),
                 sentiment_label,
                 sentiment_score,
+                get_is_excluded(t.get("username", "")),
             ])
     print(f"Saved CSV to {path}")
 
