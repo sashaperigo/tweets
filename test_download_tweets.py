@@ -538,27 +538,6 @@ class TestGetSentiment(unittest.TestCase):
             label, _ = dt.get_sentiment("ok")
         self.assertEqual(label, "neutral")
 
-    def test_every_csv_row_has_valid_sentiment(self):
-        valid_labels = {"positive", "negative", "neutral"}
-        with open(CSV_PATH, newline="", encoding="utf-8") as f:
-            rows = list(csv.DictReader(f))
-        self.assertIn("sentiment", rows[0].keys(),
-                      "CSV is missing 'sentiment' column")
-        self.assertIn("sentiment_score", rows[0].keys(),
-                      "CSV is missing 'sentiment_score' column")
-        invalid_label = [r for r in rows if r.get("sentiment") not in valid_labels]
-        self.assertEqual(invalid_label, [],
-                         f"{len(invalid_label)} rows have invalid sentiment label")
-        invalid_score = []
-        for r in rows:
-            try:
-                score = float(r.get("sentiment_score", ""))
-                if not (-1.0 <= score <= 1.0):
-                    invalid_score.append(r)
-            except (ValueError, TypeError):
-                invalid_score.append(r)
-        self.assertEqual(invalid_score, [],
-                         f"{len(invalid_score)} rows have invalid sentiment_score")
 
 
 # ---------------------------------------------------------------------------
@@ -602,15 +581,6 @@ class TestGetReplyType(unittest.TestCase):
         self.assertEqual(
             dt.get_reply_type("@someoneelse @JACKIEFIELDER_ see above", dt.JACKIE), "Thread mention")
 
-    def test_every_csv_row_has_valid_reply_type(self):
-        valid = {"Direct reply", "Mention", "Not tagged", "Thread mention"}
-        with open(CSV_PATH, newline="", encoding="utf-8") as f:
-            rows = list(csv.DictReader(f))
-        self.assertIn("reply_type", rows[0].keys(),
-                      "CSV is missing 'reply_type' column")
-        invalid = [r for r in rows if r.get("reply_type") not in valid]
-        self.assertEqual(invalid, [],
-                         f"{len(invalid)} rows have missing or invalid reply_type")
 
 
 # ---------------------------------------------------------------------------
@@ -636,14 +606,6 @@ class TestGetIsExcluded(unittest.TestCase):
     def test_empty_string_returns_false(self):
         self.assertFalse(dt.get_is_excluded(""))
 
-    def test_every_csv_row_has_is_excluded_column(self):
-        with open(CSV_PATH, newline="", encoding="utf-8") as f:
-            rows = list(csv.DictReader(f))
-        self.assertIn("is_excluded", rows[0].keys(),
-                      "CSV is missing 'is_excluded' column")
-        invalid = [r for r in rows if r.get("is_excluded") not in {"True", "False"}]
-        self.assertEqual(invalid, [],
-                         f"{len(invalid)} rows have invalid is_excluded value")
 
 
 # ---------------------------------------------------------------------------
@@ -651,7 +613,7 @@ class TestGetIsExcluded(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 def _make_data_integrity_tests(politician):
-    """Generate a TestDataIntegrity class for the given politician's files."""
+    """Generate a data validation test class for the given politician's files."""
 
     class TestDataIntegrity(unittest.TestCase):
 
@@ -659,16 +621,16 @@ def _make_data_integrity_tests(politician):
             with open(politician.json_path) as f:
                 return [t["text"] for t in json.load(f)["tweets"]]
 
-        def _load_csv_texts(self):
+        def _csv_rows(self):
             with open(politician.csv_path, newline="", encoding="utf-8") as f:
-                return [row["text"] for row in csv.DictReader(f)]
+                return list(csv.DictReader(f))
 
         def test_json_contains_no_retweets(self):
             rts = [t for t in self._load_json_texts() if t.startswith("RT @")]
             self.assertEqual(rts, [], f"{len(rts)} RT tweets found in JSON")
 
         def test_csv_contains_no_retweets(self):
-            rts = [t for t in self._load_csv_texts() if t.startswith("RT @")]
+            rts = [r["text"] for r in self._csv_rows() if r["text"].startswith("RT @")]
             self.assertEqual(rts, [], f"{len(rts)} RT tweets found in CSV")
 
         def test_json_contains_no_duplicate_ids(self):
@@ -678,32 +640,57 @@ def _make_data_integrity_tests(politician):
             self.assertEqual(dupes, [], f"{len(dupes)} duplicate IDs found in JSON")
 
         def test_csv_contains_no_duplicate_ids(self):
-            with open(politician.csv_path, newline="", encoding="utf-8") as f:
-                ids = [row["id"] for row in csv.DictReader(f)]
+            ids = [r["id"] for r in self._csv_rows()]
             dupes = [i for i in set(ids) if ids.count(i) > 1]
             self.assertEqual(dupes, [], f"{len(dupes)} duplicate IDs found in CSV")
 
         def test_json_and_csv_have_same_count(self):
             with open(politician.json_path) as f:
                 json_count = len(json.load(f)["tweets"])
-            with open(politician.csv_path, newline="", encoding="utf-8") as f:
-                csv_count = sum(1 for _ in csv.DictReader(f))
+            csv_count = len(self._csv_rows())
             self.assertEqual(json_count, csv_count,
                              f"JSON has {json_count} tweets but CSV has {csv_count} rows")
+
+        def test_every_csv_row_has_valid_reply_type(self):
+            valid = {"Direct reply", "Mention", "Not tagged", "Thread mention"}
+            rows = self._csv_rows()
+            self.assertIn("reply_type", rows[0].keys(), "CSV is missing 'reply_type' column")
+            invalid = [r for r in rows if r.get("reply_type") not in valid]
+            self.assertEqual(invalid, [], f"{len(invalid)} rows have missing or invalid reply_type")
+
+        def test_every_csv_row_has_valid_sentiment(self):
+            valid_labels = {"positive", "negative", "neutral"}
+            rows = self._csv_rows()
+            self.assertIn("sentiment", rows[0].keys(), "CSV is missing 'sentiment' column")
+            self.assertIn("sentiment_score", rows[0].keys(), "CSV is missing 'sentiment_score' column")
+            invalid_label = [r for r in rows if r.get("sentiment") not in valid_labels]
+            self.assertEqual(invalid_label, [], f"{len(invalid_label)} rows have invalid sentiment label")
+            invalid_score = []
+            for r in rows:
+                try:
+                    score = float(r.get("sentiment_score", ""))
+                    if not (-1.0 <= score <= 1.0):
+                        invalid_score.append(r)
+                except (ValueError, TypeError):
+                    invalid_score.append(r)
+            self.assertEqual(invalid_score, [], f"{len(invalid_score)} rows have invalid sentiment_score")
+
+        def test_every_csv_row_has_valid_is_excluded(self):
+            rows = self._csv_rows()
+            self.assertIn("is_excluded", rows[0].keys(), "CSV is missing 'is_excluded' column")
+            invalid = [r for r in rows if r.get("is_excluded") not in {"True", "False"}]
+            self.assertEqual(invalid, [], f"{len(invalid)} rows have invalid is_excluded value")
 
     TestDataIntegrity.__name__ = f"TestDataIntegrity_{politician.name.replace(' ', '')}"
     return TestDataIntegrity
 
 
-# Run data integrity checks for every politician that has data on disk.
+# Run data validation checks for every politician that has data on disk.
 for _politician in dt.POLITICIANS.values():
     if os.path.exists(_politician.json_path) and os.path.exists(_politician.csv_path):
         _cls = _make_data_integrity_tests(_politician)
         globals()[_cls.__name__] = _cls
 del _cls, _politician
-
-# Keep a stable reference for the sentiment/reply_type tests that read Jackie's CSV.
-CSV_PATH  = dt.JACKIE.csv_path
 
 
 if __name__ == "__main__":
