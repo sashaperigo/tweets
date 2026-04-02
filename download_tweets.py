@@ -242,18 +242,30 @@ def finalize_json(path="jackie_fielder_tweets.json"):
     print(f"  Loaded {len(existing)} existing tweets.")
 
     print("  Loading staged tweets...")
+    if not os.path.exists(STAGING_PATH):
+        raise FileNotFoundError(
+            f"Staging file '{STAGING_PATH}' not found. "
+            "Was save_json() called during this run?"
+        )
     staged = []
-    if os.path.exists(STAGING_PATH):
-        with open(STAGING_PATH, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    staged.append(json.loads(line))
+    with open(STAGING_PATH, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                staged.append(json.loads(line))
+    if not staged:
+        print("  Staging file is empty — no new tweets were found this run.")
+        os.remove(STAGING_PATH)
+        return 0
     print(f"  Loaded {len(staged)} staged tweets.")
 
     print("  Deduplicating...")
     seen_ids = {t["id"] for t in existing}
-    new_tweets = [t for t in staged if t["id"] not in seen_ids]
+    new_tweets = []
+    for t in staged:
+        if t["id"] not in seen_ids:
+            seen_ids.add(t["id"])
+            new_tweets.append(t)
     merged = existing + new_tweets
     print(f"  {len(new_tweets)} new unique tweets. Total: {len(merged)}.")
 
