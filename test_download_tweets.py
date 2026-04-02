@@ -341,7 +341,8 @@ class TestSaveCsv(unittest.TestCase):
         with open(self.tmp.name, newline="") as f:
             rows = list(csv.reader(f))
         self.assertEqual(rows[0], ["id", "created_at", "username", "name", "text",
-                                   "likes", "retweets", "replies", "quotes", "impressions"])
+                                   "likes", "retweets", "replies", "quotes", "impressions",
+                                   "reply_type"])
         self.assertEqual(len(rows), 3)  # header + 2 tweets
 
     def test_appends_without_duplicate_header(self):
@@ -362,6 +363,45 @@ class TestSaveCsv(unittest.TestCase):
         self.assertEqual(row["username"], "user1")
         self.assertEqual(row["likes"], "1")
         self.assertEqual(row["impressions"], "10")
+
+
+# ---------------------------------------------------------------------------
+# get_reply_type
+# ---------------------------------------------------------------------------
+
+class TestGetReplyType(unittest.TestCase):
+
+    def test_direct_reply_starts_with_jackiefielder(self):
+        self.assertEqual(dt.get_reply_type("@JackieFielder_ great point"), "Direct reply")
+
+    def test_direct_reply_case_insensitive(self):
+        self.assertEqual(dt.get_reply_type("@JACKIEFIELDER_ ok"), "Direct reply")
+        self.assertEqual(dt.get_reply_type("@jackiefielder_ ok"), "Direct reply")
+
+    def test_mention_contains_handle_mid_tweet(self):
+        self.assertEqual(
+            dt.get_reply_type("Did you see what @JackieFielder_ said?"), "Mention")
+
+    def test_mention_name_only_no_handle(self):
+        # Plain name with no @ is "Not tagged"
+        self.assertEqual(dt.get_reply_type("Jackie Fielder made a statement today"), "Not tagged")
+
+    def test_not_tagged_no_reference(self):
+        self.assertEqual(dt.get_reply_type("San Francisco politics are wild"), "Not tagged")
+
+    def test_mention_handle_after_other_text(self):
+        self.assertEqual(
+            dt.get_reply_type("Someone should ask @JackieFielder_ about this"), "Mention")
+
+    def test_every_csv_row_has_valid_reply_type(self):
+        valid = {"Direct reply", "Mention", "Not tagged"}
+        with open(CSV_PATH, newline="", encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+        self.assertIn("reply_type", rows[0].keys(),
+                      "CSV is missing 'reply_type' column")
+        invalid = [r for r in rows if r.get("reply_type") not in valid]
+        self.assertEqual(invalid, [],
+                         f"{len(invalid)} rows have missing or invalid reply_type")
 
 
 # ---------------------------------------------------------------------------
