@@ -126,7 +126,7 @@ def is_reply_to_other(text, politician):
     return first_mention and first_mention.group(1).lower() != politician.handle.lower()
 
 
-def fetch_page(politician, next_token=None, since_id=None, end_time=None, url=None):
+def fetch_page(politician, next_token=None, since_id=None, start_time=None, end_time=None, url=None):
     headers = {"Authorization": f"Bearer {BEARER_TOKEN}"}
     params = {
         "query": politician.query,
@@ -140,6 +140,8 @@ def fetch_page(politician, next_token=None, since_id=None, end_time=None, url=No
     else:
         if since_id:
             params["since_id"] = since_id
+    if start_time:
+        params["start_time"] = start_time
     if end_time:
         params["end_time"] = end_time
 
@@ -221,12 +223,11 @@ def download_all_tweets(politician, since_id=None):
 
 
 def backfill_tweets(politician, end_time, start_time):
-    """Backfill tweets older than end_time, stopping at start_time.
+    """Backfill tweets between start_time and end_time using search/all.
 
-    Passes end_time to the API so results begin just before our earliest
-    saved tweet and go backwards. Enforces start_time client-side: filters
-    out tweets older than start_time and stops paginating when we hit one.
-    Uses search/all — requires a paid X API tier.
+    Both start_time and end_time are passed to the API on every request
+    (including paginated ones) to ensure the full window is covered.
+    Requires a paid X API tier.
     """
     start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
 
@@ -235,7 +236,7 @@ def backfill_tweets(politician, end_time, start_time):
     total = 0
 
     while True:
-        data = fetch_page(politician, next_token, end_time=end_time, url=SEARCH_URL_ALL)
+        data = fetch_page(politician, next_token, start_time=start_time, end_time=end_time, url=SEARCH_URL_ALL)
 
         for user in data.get("includes", {}).get("users", []):
             users_by_id[user["id"]] = user
