@@ -229,6 +229,62 @@ class TestBackfillClientSideBoundary(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Progress saved on failure (try/finally in __main__)
+# ---------------------------------------------------------------------------
+
+class TestProgressOnFailure(unittest.TestCase):
+    """Verify that tweets staged before a crash are saved to both JSON and CSV."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.politician = _make_test_politician(self.tmpdir)
+        dt._vader.polarity_scores.return_value = {
+            "compound": 0.0, "pos": 0.0, "neg": 0.0, "neu": 1.0
+        }
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmpdir)
+
+    def test_staged_tweets_saved_to_json_and_csv_on_error(self):
+        # First fetch returns a page of tweets; second raises to simulate a crash.
+        page1 = {"data": [
+            _make_api_tweet("1", "2025-11-06T12:00:00Z"),
+        ], "includes": {"users": [{"id": "1", "username": "u", "name": "U"}]},
+           "meta": {"result_count": 1, "next_token": "tok"}}
+
+        call_count = [0]
+        def failing_fetch(*args, **kwargs):
+            if call_count[0] == 0:
+                call_count[0] += 1
+                return page1
+            raise RuntimeError("simulated API failure")
+
+        # Replicate the try/finally from __main__
+        try:
+            with mock.patch.object(dt, "fetch_page", side_effect=failing_fetch):
+                dt.download_all_tweets(self.politician)
+        except RuntimeError:
+            pass
+        finally:
+            new_count = dt.finalize_json(self.politician)
+            if new_count > 0:
+                dt.finalize_csv(self.politician)
+
+        # JSON should contain the tweet from the first page
+        with open(self.politician.json_path) as f:
+            tweets = json.load(f)["tweets"]
+        self.assertEqual(len(tweets), 1)
+        self.assertEqual(tweets[0]["id"], "1")
+
+        # CSV should also contain it
+        with open(self.politician.csv_path, newline="") as f:
+            rows = list(csv.DictReader(f))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["id"], "1")
+
+
+# ---------------------------------------------------------------------------
 # save_json (staging) + finalize_json
 # ---------------------------------------------------------------------------
 
