@@ -284,6 +284,8 @@ def save_json(tweets, politician):
                 "text": t["text"],
                 "public_metrics": t["public_metrics"],
                 "id": t["id"],
+                "username": t.get("username", ""),
+                "name": t.get("name", ""),
             }) + "\n")
     print(f"  Staging file updated.")
 

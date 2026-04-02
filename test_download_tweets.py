@@ -391,6 +391,25 @@ class TestStagingAndFinalize(unittest.TestCase):
         new_count = dt.finalize_json(self.politician)
         self.assertEqual(new_count, 0)
 
+    def test_save_json_persists_username_and_name(self):
+        dt.save_json(SAMPLE_TWEETS, self.politician)
+        with open(self.politician.staging_path) as f:
+            lines = [json.loads(l) for l in f if l.strip()]
+        self.assertEqual(lines[0]["username"], "user1")
+        self.assertEqual(lines[0]["name"], "User 1")
+        self.assertEqual(lines[1]["username"], "user2")
+        self.assertEqual(lines[1]["name"], "User 2")
+
+    def test_finalize_json_preserves_username_and_name(self):
+        dt.save_json(SAMPLE_TWEETS, self.politician)
+        dt.finalize_json(self.politician)
+        with open(self.politician.json_path) as f:
+            tweets = {t["id"]: t for t in json.load(f)["tweets"]}
+        self.assertEqual(tweets["100"]["username"], "user1")
+        self.assertEqual(tweets["100"]["name"], "User 1")
+        self.assertEqual(tweets["200"]["username"], "user2")
+        self.assertEqual(tweets["200"]["name"], "User 2")
+
 
 # ---------------------------------------------------------------------------
 # save_csv
@@ -485,6 +504,16 @@ class TestFinalizeCsv(unittest.TestCase):
             rows = list(csv.DictReader(f))
         self.assertEqual(len(rows), len(SAMPLE_TWEETS))
         self.assertEqual(rows[0]["id"], "100")
+
+    def test_csv_username_and_name_come_from_json(self):
+        self._write_json(SAMPLE_TWEETS)
+        dt.finalize_csv(self.politician)
+        with open(self.politician.csv_path, newline="") as f:
+            rows = {r["id"]: r for r in csv.DictReader(f)}
+        self.assertEqual(rows["100"]["username"], "user1")
+        self.assertEqual(rows["100"]["name"], "User 1")
+        self.assertEqual(rows["200"]["username"], "user2")
+        self.assertEqual(rows["200"]["name"], "User 2")
 
 
 # ---------------------------------------------------------------------------
