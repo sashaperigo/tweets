@@ -650,47 +650,60 @@ class TestGetIsExcluded(unittest.TestCase):
 # Data integrity — no filtered tweets should exist in the saved files
 # ---------------------------------------------------------------------------
 
-JSON_PATH = os.path.join(os.path.dirname(__file__), "jackie_fielder_tweets.json")
-CSV_PATH  = os.path.join(os.path.dirname(__file__), "jackie_fielder_tweets.csv")
+def _make_data_integrity_tests(politician):
+    """Generate a TestDataIntegrity class for the given politician's files."""
+
+    class TestDataIntegrity(unittest.TestCase):
+
+        def _load_json_texts(self):
+            with open(politician.json_path) as f:
+                return [t["text"] for t in json.load(f)["tweets"]]
+
+        def _load_csv_texts(self):
+            with open(politician.csv_path, newline="", encoding="utf-8") as f:
+                return [row["text"] for row in csv.DictReader(f)]
+
+        def test_json_contains_no_retweets(self):
+            rts = [t for t in self._load_json_texts() if t.startswith("RT @")]
+            self.assertEqual(rts, [], f"{len(rts)} RT tweets found in JSON")
+
+        def test_csv_contains_no_retweets(self):
+            rts = [t for t in self._load_csv_texts() if t.startswith("RT @")]
+            self.assertEqual(rts, [], f"{len(rts)} RT tweets found in CSV")
+
+        def test_json_contains_no_duplicate_ids(self):
+            with open(politician.json_path) as f:
+                ids = [t["id"] for t in json.load(f)["tweets"]]
+            dupes = [i for i in set(ids) if ids.count(i) > 1]
+            self.assertEqual(dupes, [], f"{len(dupes)} duplicate IDs found in JSON")
+
+        def test_csv_contains_no_duplicate_ids(self):
+            with open(politician.csv_path, newline="", encoding="utf-8") as f:
+                ids = [row["id"] for row in csv.DictReader(f)]
+            dupes = [i for i in set(ids) if ids.count(i) > 1]
+            self.assertEqual(dupes, [], f"{len(dupes)} duplicate IDs found in CSV")
+
+        def test_json_and_csv_have_same_count(self):
+            with open(politician.json_path) as f:
+                json_count = len(json.load(f)["tweets"])
+            with open(politician.csv_path, newline="", encoding="utf-8") as f:
+                csv_count = sum(1 for _ in csv.DictReader(f))
+            self.assertEqual(json_count, csv_count,
+                             f"JSON has {json_count} tweets but CSV has {csv_count} rows")
+
+    TestDataIntegrity.__name__ = f"TestDataIntegrity_{politician.name.replace(' ', '')}"
+    return TestDataIntegrity
 
 
-class TestDataIntegrity(unittest.TestCase):
+# Run data integrity checks for every politician that has data on disk.
+for _politician in dt.POLITICIANS.values():
+    if os.path.exists(_politician.json_path) and os.path.exists(_politician.csv_path):
+        _cls = _make_data_integrity_tests(_politician)
+        globals()[_cls.__name__] = _cls
+del _cls, _politician
 
-    def _load_json_texts(self):
-        with open(JSON_PATH) as f:
-            return [t["text"] for t in json.load(f)["tweets"]]
-
-    def _load_csv_texts(self):
-        with open(CSV_PATH, newline="", encoding="utf-8") as f:
-            return [row["text"] for row in csv.DictReader(f)]
-
-    def test_json_contains_no_retweets(self):
-        rts = [t for t in self._load_json_texts() if t.startswith("RT @")]
-        self.assertEqual(rts, [], f"{len(rts)} RT tweets found in JSON")
-
-    def test_csv_contains_no_retweets(self):
-        rts = [t for t in self._load_csv_texts() if t.startswith("RT @")]
-        self.assertEqual(rts, [], f"{len(rts)} RT tweets found in CSV")
-
-    def test_json_contains_no_duplicate_ids(self):
-        with open(JSON_PATH) as f:
-            ids = [t["id"] for t in json.load(f)["tweets"]]
-        dupes = [i for i in set(ids) if ids.count(i) > 1]
-        self.assertEqual(dupes, [], f"{len(dupes)} duplicate IDs found in JSON")
-
-    def test_csv_contains_no_duplicate_ids(self):
-        with open(CSV_PATH, newline="", encoding="utf-8") as f:
-            ids = [row["id"] for row in csv.DictReader(f)]
-        dupes = [i for i in set(ids) if ids.count(i) > 1]
-        self.assertEqual(dupes, [], f"{len(dupes)} duplicate IDs found in CSV")
-
-    def test_json_and_csv_have_same_count(self):
-        with open(JSON_PATH) as f:
-            json_count = len(json.load(f)["tweets"])
-        with open(CSV_PATH, newline="", encoding="utf-8") as f:
-            csv_count = sum(1 for _ in csv.DictReader(f))
-        self.assertEqual(json_count, csv_count,
-                         f"JSON has {json_count} tweets but CSV has {csv_count} rows")
+# Keep a stable reference for the sentiment/reply_type tests that read Jackie's CSV.
+CSV_PATH  = dt.JACKIE.csv_path
 
 
 if __name__ == "__main__":
