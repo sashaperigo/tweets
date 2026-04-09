@@ -76,7 +76,31 @@ DANIEL = Politician(
     staging_path="daniel_lurie_tweets_staging.jsonl",
 )
 
-POLITICIANS = {"jackie": JACKIE, "daniel": DANIEL}
+SCOTT = Politician(
+    name="Scott Wiener",
+    handle="Scott_Wiener",
+    json_path="scott_wiener_tweets.json",
+    csv_path="scott_wiener_tweets.csv",
+    staging_path="scott_wiener_tweets_staging.jsonl",
+)
+
+CONNIE = Politician(
+    name="Connie Chan",
+    handle="conniechansf",
+    json_path="connie_chan_tweets.json",
+    csv_path="connie_chan_tweets.csv",
+    staging_path="connie_chan_tweets_staging.jsonl",
+)
+
+SAIKAT = Politician(
+    name="Saikat Chakrabarti",
+    handle="saikatc",
+    json_path="saikat_chakrabarti_tweets.json",
+    csv_path="saikat_chakrabarti_tweets.csv",
+    staging_path="saikat_chakrabarti_tweets_staging.jsonl",
+)
+
+POLITICIANS = {"jackie": JACKIE, "daniel": DANIEL, "scott": SCOTT, "connie": CONNIE, "saikat": SAIKAT}
 
 
 def get_is_excluded(username):
